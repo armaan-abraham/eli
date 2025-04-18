@@ -1,0 +1,38 @@
+[project]
+name = "eli"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Armaan Abraham", email = "armaanabraham@g.ucla.edu" }
+]
+dependencies = [
+    "torch>=2.6.0",
+    "transformers>=4.51.3",
+    "datasets>=3.5.0",
+    "einops>=0.8.1",
+    "pytest>=8.3.5",
+    "ipykernel>=6.29.5",
+    "transformer-lens>=2.15.0",
+    "jaxtyping>=0.3.1",
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = []
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eli"]
+
+[tool.ruff.lint]
+select = [
+    "I",
+]
