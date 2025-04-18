@@ -1,4 +1,4 @@
-# EXPLAP (EXPlanation generation from Language model Prediction)
+# ELI (Explanations via LLM Inference)
 
 Background
 Neural network interpetability would be greatly benefited by a robust quantitative measure for the human interpretability of an explanation. Why are we not satisfied with the application of matmuls and activation functions during the forward pass as an explanation for how a neural network makes a decision? This explanation is perfectly precise and concrete, so what is it about it that us humans don’t like?
