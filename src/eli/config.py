@@ -13,7 +13,7 @@ dtypes = {
 
 @dataclass
 class Config:
-    num_train_iter: int = 100
+    num_train_iter: int = 2
 
     seed: int = 42
 
@@ -24,17 +24,17 @@ class Config:
     target_model_name: str = "EleutherAI/pythia-14m"
     decoder_model_name: str = "EleutherAI/pythia-14m"
     vocab_size: int = 50304
-    target_ctx_len_toks: int = 256
-    decoder_pred_len_toks: int = 32
-    encoding_len_toks: int = 16
+    target_ctx_len_toks: int = 4
+    decoder_pred_len_toks: int = 2
+    encoding_len_toks: int = 2
 
-    train_batch_size_samples: int = 128
-    target_model_batch_size_samples: int = 128
+    train_batch_size_samples: int = 2
+    target_model_batch_size_samples: int = 2
 
-    buffer_size_samples: int = 2048
+    buffer_size_samples: int = 16
 
     target_model_act_dim: int = 128
-    decoder_model_embed_dim: int = 2048
+    decoder_model_embed_dim: int = 128
 
     device: torch.device = CPU
     dtype: torch.dtype = dtypes["bfloat16"]

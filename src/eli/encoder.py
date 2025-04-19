@@ -232,10 +232,10 @@ class EncoderTrainer:
         self.cfg = cfg
         self.encoder_cfg = encoder_cfg
 
-        self.encoder = Encoder(cfg, encoder_cfg).to(cfg.dtype, CPU)
+        self.encoder = Encoder(cfg, encoder_cfg).to(dtype=cfg.dtype, device=CPU)
         self.decoder = AutoModelForCausalLM.from_pretrained(
-            cfg.decoder_model_name, torch_dtype=cfg.dtype, device=CPU
-        )
+            cfg.decoder_model_name, torch_dtype=cfg.dtype
+        ).to(CPU)
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.decoder_model_name)
 
         # We'll keep the optimizer's state on the cfg-specified device, so
@@ -247,7 +247,7 @@ class EncoderTrainer:
             betas=(0.9, 0.99),
             weight_decay=encoder_cfg.weight_decay,
         )
-        self.encoder.to("cpu")
+        self.encoder.to(CPU)
 
     def move_models_to_device(self, device: torch.device):
         self.encoder.to(device)

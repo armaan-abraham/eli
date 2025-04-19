@@ -211,12 +211,12 @@ class DataCollector:
 
         # Load model twice for transformer lens and inference with the correct dtype
         self.target_model = AutoModelForCausalLM.from_pretrained(
-            cfg.target_model_name, torch_dtype=cfg.dtype, device=CPU
-        )
+            cfg.target_model_name, torch_dtype=cfg.dtype
+        ).to(CPU)
         self.target_model_act_collection = (
             transformer_lens.HookedTransformer.from_pretrained(
-                cfg.target_model_name, torch_dtype=cfg.dtype, device=CPU
-            )
+                cfg.target_model_name, torch_dtype=cfg.dtype
+            ).to(CPU)
         )
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
 
