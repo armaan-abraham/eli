@@ -1,11 +1,16 @@
+import os
 from typing import Dict
 
-import wandb
 from tqdm import tqdm
 
+import wandb
 from eli.config import CPU, Config, EncoderConfig, cfg, encoder_cfg
+from eli.context import DataCollectorEncoderContext
 from eli.data import DataCollector
 from eli.encoder import Encoder, EncoderTrainer
+
+# I think there may be a bug in huggingface, just force
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 
 def collect_data(data_collector: DataCollector):
@@ -30,14 +35,16 @@ def log_metrics(
 
 
 def train():
-    data_collector = DataCollector(cfg)
-    encoder_trainer = EncoderTrainer(cfg, encoder_cfg)
+    data_encoder_context = DataCollectorEncoderContext(cfg)
+    data_collector = DataCollector(data_encoder_context, cfg)
+    encoder_trainer = EncoderTrainer(data_encoder_context, cfg, encoder_cfg)
 
     wandb.init(project="eli")
     wandb.config.update(cfg)
     wandb.config.update(encoder_cfg)
 
     try:
+        data_collector.prefetch_next_tokens()
         for train_iter in tqdm(range(cfg.num_train_iter), desc="Training"):
             collect_data(data_collector)
 
@@ -48,6 +55,7 @@ def train():
             log_metrics(metrics, data_collector, encoder_trainer)
             encoder_trainer.move_models_to_device(CPU)
     finally:
+        data_collector.finish()
         wandb.finish()
 
 

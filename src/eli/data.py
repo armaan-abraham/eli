@@ -1,6 +1,8 @@
 import logging
 import os
+import threading
 from pathlib import Path
+from queue import Queue
 from typing import Dict, List
 
 import aiohttp
@@ -13,6 +15,7 @@ from datasets.arrow_dataset import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
+from eli.context import DataCollectorEncoderContext
 
 this_dir = Path(__file__).parent
 cache_dir = this_dir / "cache"
@@ -103,21 +106,25 @@ def tokenize_and_concatenate(
         # Drop padding tokens
         tokens = tokens[tokens != tokenizer.pad_token_id]
         num_tokens = len(tokens)
+        assert (
+            num_tokens > seq_len
+        ), f"Num tokens: {num_tokens} is less than seq_len: {seq_len}"
         logging.info(f"Num tokens: {num_tokens}")
 
         # Handle cases where num_tokens is less than seq_len
-        if num_tokens < seq_len:
-            num_batches = 1
-            # Pad tokens if necessary
-            tokens = tokens[:seq_len]
-            if len(tokens) < seq_len:
-                padding_length = seq_len - len(tokens)
-                padding = np.full(padding_length, tokenizer.pad_token_id)
-                tokens = np.concatenate([tokens, padding], axis=0)
-        else:
-            num_batches = num_tokens // seq_len
-            # Drop the final tokens if not enough to make a full sequence
-            tokens = tokens[: seq_len * num_batches]
+        # if num_tokens < seq_len:
+        #     num_batches = 1
+        #     # Pad tokens if necessary
+        #     tokens = tokens[:seq_len]
+        #     if len(tokens) < seq_len:
+        #         padding_length = seq_len - len(tokens)
+        #         padding = np.full(padding_length, tokenizer.pad_token_id)
+        #         tokens = np.concatenate([tokens, padding], axis=0)
+        # else:
+
+        num_batches = num_tokens // seq_len
+        # Drop the final tokens if not enough to make a full sequence
+        tokens = tokens[: seq_len * num_batches]
 
         tokens = einops.rearrange(
             tokens, "(batch seq) -> batch seq", batch=num_batches, seq=seq_len
@@ -142,6 +149,7 @@ def tokenize_and_concatenate(
 
 
 def stream_training_chunks(
+    tokenizer: AutoTokenizer,
     cfg: Config = cfg,
 ):
     CLIENT_TIMEOUT_SECONDS = 60 * 60 * 2
@@ -169,7 +177,7 @@ def stream_training_chunks(
 
     dataset_iter = tokenize_and_concatenate(
         dataset_iter,
-        AutoTokenizer.from_pretrained(cfg.target_model_name),
+        tokenizer,
         streaming=True,
         max_length=cfg.target_ctx_len_toks,
         add_bos_token=False,
@@ -183,10 +191,18 @@ def stream_training_chunks(
 
 
 class DataCollector:
-    def __init__(self, cfg: Config = cfg):
+    def __init__(
+        self, data_encoder_context: DataCollectorEncoderContext, cfg: Config = cfg
+    ):
         self.cfg = cfg
+        self.data_encoder_context = data_encoder_context
+        self.token_stream = stream_training_chunks(
+            self.data_encoder_context.tokenizer, cfg
+        )
 
-        self.token_stream = stream_training_chunks(cfg)
+        # Add a queue to hold prefetched tokens
+        self.token_queue = Queue(maxsize=1)
+        self.prefetch_thread = None
 
         # Define buffers
         self.target_generated_tokens = torch.zeros(
@@ -209,7 +225,6 @@ class DataCollector:
             device=CPU,
         )
 
-        # Load model twice for transformer lens and inference with the correct dtype
         self.target_model = AutoModelForCausalLM.from_pretrained(
             cfg.target_model_name, torch_dtype=cfg.dtype
         ).to(CPU)
@@ -218,15 +233,38 @@ class DataCollector:
                 cfg.target_model_name, torch_dtype=cfg.dtype
             ).to(CPU)
         )
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+        self.tokenizer = self.data_encoder_context.tokenizer
+
+    def prefetch_next_tokens(self):
+        """Start a new thread to fetch the next batch of tokens"""
+        if self.prefetch_thread is not None and self.prefetch_thread.is_alive():
+            # Wait for any existing prefetch to complete
+            self.prefetch_thread.join()
+
+        def fetch_worker():
+            try:
+                tokens = next(self.token_stream)
+                self.token_queue.put(tokens)
+            except StopIteration:
+                # Handle end of dataset if needed
+                self.token_queue.put(None)
+
+        self.prefetch_thread = threading.Thread(target=fetch_worker)
+        self.prefetch_thread.daemon = True  # Thread will exit when main program exits
+        self.prefetch_thread.start()
 
     def move_models_to_device(self, device: torch.device):
         self.target_model.to(device)
         self.target_model_act_collection.to(device)
 
     def collect_data(self):
-        # Load tokens
-        toks_init = next(self.token_stream)
+        # Get the prefetched tokens
+        toks_init = self.token_queue.get()
+
+        # Start prefetching the next batch
+        self.prefetch_next_tokens()
+
+        assert toks_init is not None, "Ran out of token data"
         assert toks_init.shape == (
             self.cfg.buffer_size_samples,
             self.cfg.target_ctx_len_toks,
@@ -260,11 +298,16 @@ class DataCollector:
             length_toks = (
                 self.cfg.target_ctx_len_toks + self.cfg.target_generation_len_toks
             )
+
+            # Create an attention mask of all 1s (all tokens are valid content)
+            attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
+
             batch_toks_with_gen = self.target_model.generate(
                 batch_toks,
+                attention_mask=attention_mask,
                 max_length=length_toks,
-                min_length=length_toks,  # Force generating the full sequence
-                do_sample=False,  # Use greedy decoding to ensure deterministic length
+                min_length=length_toks,
+                do_sample=False,
                 pad_token_id=self.tokenizer.pad_token_id
                 if self.tokenizer.pad_token_id is not None
                 else self.tokenizer.eos_token_id,
@@ -288,3 +331,8 @@ class DataCollector:
             "target_logits": self.target_logits,
             "target_acts": self.target_acts,
         }
+
+    def finish(self):
+        """Clean up resources and join any pending threads"""
+        if self.prefetch_thread and self.prefetch_thread.is_alive():
+            self.prefetch_thread.join()

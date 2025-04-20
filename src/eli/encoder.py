@@ -3,9 +3,10 @@ from einops import einsum
 from jaxtyping import Float
 from torch import Tensor
 from torch.nn import init
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
 
 from eli.config import CPU, Config, EncoderConfig
+from eli.context import DataCollectorEncoderContext
 from eli.data import DataCollector
 
 
@@ -228,16 +229,20 @@ def kl_div(
 
 
 class EncoderTrainer:
-    def __init__(self, cfg: Config, encoder_cfg: EncoderConfig):
+    def __init__(
+        self,
+        data_encoder_context: DataCollectorEncoderContext,
+        cfg: Config,
+        encoder_cfg: EncoderConfig,
+    ):
         self.cfg = cfg
         self.encoder_cfg = encoder_cfg
 
         self.encoder = Encoder(cfg, encoder_cfg).to(dtype=cfg.dtype, device=CPU)
+        self.tokenizer = data_encoder_context.tokenizer
         self.decoder = AutoModelForCausalLM.from_pretrained(
             cfg.decoder_model_name, torch_dtype=cfg.dtype
         ).to(CPU)
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.decoder_model_name)
-
         # We'll keep the optimizer's state on the cfg-specified device, so
         # transfer encoder to that device before initializing the optimizer.
         self.encoder.to(cfg.device)
@@ -300,6 +305,13 @@ class EncoderTrainer:
             dim=1,
         )
 
+        # Create attention mask (all 1s since you're not using padding)
+        attention_mask = torch.ones(
+            combined_embeds.shape[0],
+            combined_embeds.shape[1],
+            device=combined_embeds.device,
+        )
+
         # Verify the combined embeddings shape is correct
         expected_length = (
             prefix_tokens.shape[1]
@@ -311,7 +323,7 @@ class EncoderTrainer:
             combined_embeds.shape[1] == expected_length
         ), f"Combined embeddings length mismatch: {combined_embeds.shape[1]} vs expected {expected_length}"
 
-        return combined_embeds
+        return combined_embeds, attention_mask
 
     def loss(
         self,
@@ -321,14 +333,15 @@ class EncoderTrainer:
     ):
         virtual_embeddings = self.encoder(target_acts)
 
-        decoder_context_embeddings = self.assemble_decoder_context_embeddings(
-            target_generated_tokens, virtual_embeddings
+        decoder_context_embeddings, attention_mask = (
+            self.assemble_decoder_context_embeddings(
+                target_generated_tokens, virtual_embeddings
+            )
         )
 
-        # Generate logits with decoder
-        decoder_logits = self.decoder(inputs_embeds=decoder_context_embeddings).logits[
-            :, -self.cfg.decoder_pred_len_toks :, :
-        ]
+        decoder_logits = self.decoder(
+            inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask
+        ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
 
         return kl_div(decoder_logits, target_logits)
 
