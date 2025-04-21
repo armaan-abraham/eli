@@ -35,9 +35,8 @@ def log_metrics(
 
 
 def train():
-    data_encoder_context = DataCollectorEncoderContext(cfg)
-    data_collector = DataCollector(data_encoder_context, cfg)
-    encoder_trainer = EncoderTrainer(data_encoder_context, cfg, encoder_cfg)
+    data_collector = DataCollector(cfg)
+    encoder_trainer = EncoderTrainer(cfg, encoder_cfg)
 
     wandb.init(project="eli")
     wandb.config.update(cfg)

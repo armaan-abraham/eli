@@ -3,10 +3,9 @@ from einops import einsum
 from jaxtyping import Float
 from torch import Tensor
 from torch.nn import init
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, EncoderConfig
-from eli.context import DataCollectorEncoderContext
 from eli.data import DataCollector
 
 
@@ -231,15 +230,14 @@ def kl_div(
 class EncoderTrainer:
     def __init__(
         self,
-        data_encoder_context: DataCollectorEncoderContext,
         cfg: Config,
         encoder_cfg: EncoderConfig,
     ):
         self.cfg = cfg
         self.encoder_cfg = encoder_cfg
 
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.decoder_model_name)
         self.encoder = Encoder(cfg, encoder_cfg).to(dtype=cfg.dtype, device=CPU)
-        self.tokenizer = data_encoder_context.tokenizer
         self.decoder = AutoModelForCausalLM.from_pretrained(
             cfg.decoder_model_name, torch_dtype=cfg.dtype
         ).to(CPU)
@@ -249,7 +247,7 @@ class EncoderTrainer:
         self.optimizer = torch.optim.AdamW(
             self.encoder.parameters(),
             lr=encoder_cfg.lr,
-            betas=(0.9, 0.99),
+            betas=encoder_cfg.betas,
             weight_decay=encoder_cfg.weight_decay,
         )
         self.encoder.to(CPU)
@@ -271,13 +269,13 @@ class EncoderTrainer:
         {system_msg}
         <|user|>
         Your task is to predict what another LLM will say, given the following description of what the LLM is thinking. Provide your prediction and nothing else."""
-        prefix_tokens = self.tokenizer(prefix_text, return_tensors="pt").input_ids
+        prefix_tokens = self.tokenizer(prefix_text, return_tensors="pt").input_ids.to(target_generated_tokens.device)
 
         # Generate tokens after virtual embeddings (excluding target model generation)
         suffix_start_text = "<|assistant|>"
         suffix_start_tokens = self.tokenizer(
             suffix_start_text, return_tensors="pt"
-        ).input_ids
+        ).input_ids.to(target_generated_tokens.device)
 
         prefix_tokens = prefix_tokens.repeat(target_generated_tokens.shape[0], 1)
         suffix_start_tokens = suffix_start_tokens.repeat(
@@ -379,7 +377,9 @@ class EncoderTrainer:
             results["loss"].append(batch_loss.item())
 
             batch_loss.backward()
-
+            
+            torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), max_norm=0.5)
+            
             self.optimizer.step()
 
         return results
@@ -409,7 +409,7 @@ class EncoderTrainer:
         <|user|>
         Your task is to predict what another LLM will say. Provide your prediction and nothing else.
         <|assistant|>"""
-        prefix_tokens = self.tokenizer(prefix_text, return_tensors="pt").input_ids
+        prefix_tokens = self.tokenizer(prefix_text, return_tensors="pt").input_ids.to(tokens.device)
 
         prefix_tokens = prefix_tokens.repeat(tokens.shape[0], 1)
 

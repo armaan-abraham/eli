@@ -15,7 +15,6 @@ from datasets.arrow_dataset import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
-from eli.context import DataCollectorEncoderContext
 
 this_dir = Path(__file__).parent
 cache_dir = this_dir / "cache"
@@ -123,12 +122,19 @@ def tokenize_and_concatenate(
         # else:
 
         num_batches = num_tokens // seq_len
+
         # Drop the final tokens if not enough to make a full sequence
         tokens = tokens[: seq_len * num_batches]
+
 
         tokens = einops.rearrange(
             tokens, "(batch seq) -> batch seq", batch=num_batches, seq=seq_len
         )
+
+        # Drop sequences that end with an EOS token because we are using these
+        # for generation.
+        tokens = tokens[tokens[:, -1] != tokenizer.eos_token_id]
+
         if add_bos_token:
             prefix = np.full((num_batches, 1), tokenizer.bos_token_id)
             tokens = np.concatenate([prefix, tokens], axis=1)
@@ -149,7 +155,6 @@ def tokenize_and_concatenate(
 
 
 def stream_training_chunks(
-    tokenizer: AutoTokenizer,
     cfg: Config = cfg,
 ):
     CLIENT_TIMEOUT_SECONDS = 60 * 60 * 2
@@ -175,6 +180,8 @@ def stream_training_chunks(
         seed=cfg.seed, buffer_size=cfg.dataset_batch_size_entries
     )
 
+    tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+
     dataset_iter = tokenize_and_concatenate(
         dataset_iter,
         tokenizer,
@@ -191,14 +198,10 @@ def stream_training_chunks(
 
 
 class DataCollector:
-    def __init__(
-        self, data_encoder_context: DataCollectorEncoderContext, cfg: Config = cfg
-    ):
+    def __init__(self, cfg: Config = cfg):
         self.cfg = cfg
-        self.data_encoder_context = data_encoder_context
-        self.token_stream = stream_training_chunks(
-            self.data_encoder_context.tokenizer, cfg
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+        self.token_stream = stream_training_chunks(cfg)
 
         # Add a queue to hold prefetched tokens
         self.token_queue = Queue(maxsize=1)
@@ -233,7 +236,6 @@ class DataCollector:
                 cfg.target_model_name, torch_dtype=cfg.dtype
             ).to(CPU)
         )
-        self.tokenizer = self.data_encoder_context.tokenizer
 
     def prefetch_next_tokens(self):
         """Start a new thread to fetch the next batch of tokens"""
@@ -302,25 +304,32 @@ class DataCollector:
             # Create an attention mask of all 1s (all tokens are valid content)
             attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
 
+            print("generating")
+            print(torch.any(batch_toks[:, -1] == self.tokenizer.eos_token_id))
+
             batch_toks_with_gen = self.target_model.generate(
                 batch_toks,
                 attention_mask=attention_mask,
                 max_length=length_toks,
                 min_length=length_toks,
                 do_sample=False,
-                pad_token_id=self.tokenizer.pad_token_id
-                if self.tokenizer.pad_token_id is not None
-                else self.tokenizer.eos_token_id,
+                pad_token_id=self.tokenizer.eos_token_id,
             )
             self.target_generated_tokens[start_idx:end_idx] = batch_toks_with_gen[
                 :, -self.cfg.target_generation_len_toks :
             ]
+
+            print(torch.any(batch_toks_with_gen[:, -1] == self.tokenizer.eos_token_id))
+
+            print("collecting logits")
 
             # Collect logits of target model
             with torch.no_grad():
                 self.target_logits[start_idx:end_idx] = self.target_model(
                     batch_toks_with_gen
                 ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
+
+            print("done")
 
         self.move_models_to_device(CPU)
 
