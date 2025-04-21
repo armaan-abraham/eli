@@ -7,6 +7,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
+from eli.utils import log_gpu_memory_usage
 
 
 class Attention(torch.nn.Module):
@@ -343,6 +344,7 @@ class EncoderTrainer:
 
         return kl_div(decoder_logits, target_logits)
 
+    @log_gpu_memory_usage
     def train(self, data_collector: DataCollector):
         # Load all data
         data = data_collector.data

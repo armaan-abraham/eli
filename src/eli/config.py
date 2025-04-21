@@ -58,9 +58,9 @@ cfg = Config()
 class EncoderConfig:
     n_layers: int = 2
     n_heads: int = 4
-    d_model: int = 128
-    d_head: int = 32
-    d_mlp: int = 512
+    d_model: int = 64
+    d_head: int = 16
+    d_mlp: int = 256
 
     lr: float = 2e-4
     weight_decay: float = 1e-2

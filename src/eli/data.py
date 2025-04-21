@@ -15,6 +15,7 @@ from datasets.arrow_dataset import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
+from eli.utils import log_gpu_memory_usage
 
 this_dir = Path(__file__).parent
 cache_dir = this_dir / "cache"
@@ -259,6 +260,7 @@ class DataCollector:
         self.target_model.to(device)
         self.target_model_act_collection.to(device)
 
+    @log_gpu_memory_usage
     def collect_data(self):
         # Get the prefetched tokens
         toks_init = self.token_queue.get()

@@ -4,10 +4,9 @@ from typing import Dict
 from tqdm import tqdm
 
 import wandb
-from eli.config import CPU, Config, EncoderConfig, cfg, encoder_cfg
-from eli.context import DataCollectorEncoderContext
+from eli.config import CPU, cfg, encoder_cfg
 from eli.data import DataCollector
-from eli.encoder import Encoder, EncoderTrainer
+from eli.encoder import EncoderTrainer
 
 # I think there may be a bug in huggingface, just force
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
