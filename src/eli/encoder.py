@@ -9,6 +9,23 @@ from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
 from eli.utils import log_gpu_memory_usage
 
+PROMPT_PREFIX = """<|system|>
+You are an expert at predicting what a language model will say next.
+<|user|> Your task is to predict what another LLM will say, given a
+description of what the LLM is currently thinking. Provide your
+prediction and nothing else. LLM internal thoughts description:
+"""
+
+PROMPT_SUFFIX = """.
+<|assistant|>"""
+
+PROMPT_PREFIX_CONTROL = """<|system|>
+You are an expert at predicting what a language model will say next.
+<|user|>
+Your task is to predict what another LLM will say. Provide your prediction and nothing else.
+<|assistant|>
+"""
+
 
 class Attention(torch.nn.Module):
     def __init__(self, cfg: EncoderConfig):
@@ -263,19 +280,13 @@ class EncoderTrainer:
         virtual_embeddings: Float[Tensor, "batch tok d_embed"],
     ) -> Float[Tensor, "batch tok d_embed"]:
         # Generate tokens before virtual embeddings
-        system_msg = (
-            "You are an expert at predicting what a language model will say next."
+        prefix_tokens = self.tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids.to(
+            target_generated_tokens.device
         )
-        prefix_text = f"""<|system|>
-        {system_msg}
-        <|user|>
-        Your task is to predict what another LLM will say, given the following description of what the LLM is thinking. Provide your prediction and nothing else."""
-        prefix_tokens = self.tokenizer(prefix_text, return_tensors="pt").input_ids.to(target_generated_tokens.device)
 
         # Generate tokens after virtual embeddings (excluding target model generation)
-        suffix_start_text = "<|assistant|>"
         suffix_start_tokens = self.tokenizer(
-            suffix_start_text, return_tensors="pt"
+            PROMPT_SUFFIX, return_tensors="pt"
         ).input_ids.to(target_generated_tokens.device)
 
         prefix_tokens = prefix_tokens.repeat(target_generated_tokens.shape[0], 1)
@@ -379,9 +390,9 @@ class EncoderTrainer:
             results["loss"].append(batch_loss.item())
 
             batch_loss.backward()
-            
+
             torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), max_norm=0.5)
-            
+
             self.optimizer.step()
 
         return results
@@ -403,15 +414,9 @@ class EncoderTrainer:
         )
         logits = target_logits[: self.cfg.train_batch_size_samples].to(self.cfg.device)
 
-        system_msg = (
-            "You are an expert at predicting what a language model will say next."
-        )
-        prefix_text = f"""<|system|>
-        {system_msg}
-        <|user|>
-        Your task is to predict what another LLM will say. Provide your prediction and nothing else.
-        <|assistant|>"""
-        prefix_tokens = self.tokenizer(prefix_text, return_tensors="pt").input_ids.to(tokens.device)
+        prefix_tokens = self.tokenizer(
+            PROMPT_PREFIX_CONTROL, return_tensors="pt"
+        ).input_ids.to(tokens.device)
 
         prefix_tokens = prefix_tokens.repeat(tokens.shape[0], 1)
 

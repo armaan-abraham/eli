@@ -127,7 +127,6 @@ def tokenize_and_concatenate(
         # Drop the final tokens if not enough to make a full sequence
         tokens = tokens[: seq_len * num_batches]
 
-
         tokens = einops.rearrange(
             tokens, "(batch seq) -> batch seq", batch=num_batches, seq=seq_len
         )
