@@ -5,6 +5,7 @@ from torch import Tensor
 from torch.amp import GradScaler
 from torch.nn import init
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from typing import Iterable, Dict
 
 from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
@@ -355,6 +356,30 @@ def kl_div(
     return kl_div
 
 
+# --- Dummy Stats Function ---
+def assemble_grad_stats_dummy(parameters: Iterable[torch.nn.Parameter]) -> Dict[str, torch.Tensor]:
+    """
+    Minimal function: Accesses parameters but does almost no computation.
+    Returns dummy tensors.
+    """
+    device = torch.device(CPU) # Default device
+    try:
+        # Try to get device from the first parameter that has a gradient
+        param_iter = iter(parameters)
+        while True:
+            p = next(param_iter)
+            if p.grad is not None:
+                device = p.grad.device
+                break
+    except StopIteration:
+        # No parameters or none with gradients found, use default
+        pass
+
+    # Return dummy tensors on the determined device
+    return {k: torch.tensor(0.0, device=device) for k in
+            ["mean_abs", "norm", "max_abs", "min_abs"]}
+
+
 class EncoderTrainer:
     def __init__(
         self,
@@ -413,8 +438,13 @@ class EncoderTrainer:
         batch_size = self.cfg.train_batch_size_samples
         num_batches = buffer_size // batch_size
 
+        # 1) initialize new metric lists
         results = {
             "loss": [],
+            "grad_mean_abs": [],
+            "grad_norm": [],
+            "grad_max_abs": [],
+            "grad_min_abs": [],
         }
 
         # Training loop
@@ -430,19 +460,26 @@ class EncoderTrainer:
             batch_acts = target_acts[start_idx:end_idx].to(self.cfg.device)
 
             self.optimizer.zero_grad()
-
             batch_loss = self.loss(batch_tokens, batch_logits, batch_acts, train_iter)
-            results["loss"].append(batch_loss.item())
 
+            # 2) backward + unscale + clip
             self.scaler.scale(batch_loss).backward()
-
             self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(
+                self.encoder_decoder.parameters(), max_norm=0.5
+            )
 
-            torch.nn.utils.clip_grad_norm_(self.encoder_decoder.parameters(), max_norm=0.5)
-
+            # Step and update
             self.scaler.step(self.optimizer)
             self.scaler.update()
-        
+
+            # Log results (will be zeros for grads)
+            tensor_stats = assemble_grad_stats_dummy(self.encoder_decoder.parameters())
+            results["loss"].append(batch_loss.item())
+            results["grad_mean_abs"].append(tensor_stats["mean_abs"].item())
+            results["grad_norm"].append(tensor_stats["norm"].item())
+            results["grad_max_abs"].append(tensor_stats["max_abs"].item())
+            results["grad_min_abs"].append(tensor_stats["min_abs"].item())
 
         return results
 
