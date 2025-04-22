@@ -207,7 +207,7 @@ class DataCollector:
         self.token_queue = Queue(maxsize=1)
         self.prefetch_thread = None
 
-        # Define buffers
+        # Define buffers - using float32 by default for storage
         self.target_generated_tokens = torch.zeros(
             (self.cfg.buffer_size_samples, self.cfg.target_generation_len_toks),
             dtype=torch.int32,
@@ -219,21 +219,22 @@ class DataCollector:
                 self.cfg.decoder_pred_len_toks,
                 self.cfg.vocab_size,
             ),
-            dtype=torch.bfloat16,
+            dtype=torch.float32,  # Store in float32
             device=CPU,
         )
         self.target_acts = torch.zeros(
             (self.cfg.buffer_size_samples, self.cfg.target_model_act_dim),
-            dtype=torch.bfloat16,
+            dtype=torch.float32,  # Store in float32
             device=CPU,
         )
 
+        # Load models in float32
         self.target_model = AutoModelForCausalLM.from_pretrained(
-            cfg.target_model_name, torch_dtype=cfg.dtype
+            cfg.target_model_name
         ).to(CPU)
         self.target_model_act_collection = (
             transformer_lens.HookedTransformer.from_pretrained(
-                cfg.target_model_name, torch_dtype=cfg.dtype
+                cfg.target_model_name
             ).to(CPU)
         )
 
@@ -286,51 +287,55 @@ class DataCollector:
             # Get current batch
             batch_toks = toks_init[start_idx:end_idx].to(self.cfg.device)
 
-            # Collect acts of target model
-            _, cache = self.target_model_act_collection.run_with_cache(
-                batch_toks,
-                stop_at_layer=self.cfg.layer + 1,
-                names_filter=self.cfg.act_name,
-                return_cache_object=True,
-            )
-            self.target_acts[start_idx:end_idx] = cache.cache_dict[self.cfg.act_name][
-                :, -1, :
-            ]
+            # Use autocast for all model operations
+            with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
+                # Collect acts of target model
+                _, cache = self.target_model_act_collection.run_with_cache(
+                    batch_toks,
+                    stop_at_layer=self.cfg.layer + 1,
+                    names_filter=self.cfg.act_name,
+                    return_cache_object=True,
+                )
+                self.target_acts[start_idx:end_idx] = cache.cache_dict[
+                    self.cfg.act_name
+                ][:, -1, :]
 
-            # Generate tokens with target model
-            length_toks = (
-                self.cfg.target_ctx_len_toks + self.cfg.target_generation_len_toks
-            )
+                # Generate tokens with target model
+                length_toks = (
+                    self.cfg.target_ctx_len_toks + self.cfg.target_generation_len_toks
+                )
 
-            # Create an attention mask of all 1s (all tokens are valid content)
-            attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
+                # Create an attention mask of all 1s (all tokens are valid content)
+                attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
 
-            print("generating")
-            print(torch.any(batch_toks[:, -1] == self.tokenizer.eos_token_id))
+                print("generating")
+                print(torch.any(batch_toks[:, -1] == self.tokenizer.eos_token_id))
 
-            batch_toks_with_gen = self.target_model.generate(
-                batch_toks,
-                attention_mask=attention_mask,
-                max_length=length_toks,
-                min_length=length_toks,
-                do_sample=False,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
-            self.target_generated_tokens[start_idx:end_idx] = batch_toks_with_gen[
-                :, -self.cfg.target_generation_len_toks :
-            ]
+                batch_toks_with_gen = self.target_model.generate(
+                    batch_toks,
+                    attention_mask=attention_mask,
+                    max_length=length_toks,
+                    min_length=length_toks,
+                    do_sample=False,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                )
+                self.target_generated_tokens[start_idx:end_idx] = batch_toks_with_gen[
+                    :, -self.cfg.target_generation_len_toks :
+                ]
 
-            print(torch.any(batch_toks_with_gen[:, -1] == self.tokenizer.eos_token_id))
+                print(
+                    torch.any(batch_toks_with_gen[:, -1] == self.tokenizer.eos_token_id)
+                )
 
-            print("collecting logits")
+                print("collecting logits")
 
-            # Collect logits of target model
-            with torch.no_grad():
-                self.target_logits[start_idx:end_idx] = self.target_model(
-                    batch_toks_with_gen
-                ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
+                # Collect logits of target model
+                with torch.no_grad():
+                    self.target_logits[start_idx:end_idx] = self.target_model(
+                        batch_toks_with_gen
+                    ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
 
-            print("done")
+                print("done")
 
         self.move_models_to_device(CPU)
 

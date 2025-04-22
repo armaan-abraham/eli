@@ -16,13 +16,18 @@ def collect_data(data_collector: DataCollector):
     data_collector.collect_data()
 
 
-def optimize_encoder(data_collector: DataCollector, encoder_trainer: EncoderTrainer):
-    metrics = encoder_trainer.train(data_collector)
+def optimize_encoder(
+    data_collector: DataCollector, encoder_trainer: EncoderTrainer, train_iter: int
+):
+    metrics = encoder_trainer.train(data_collector, train_iter)
     return metrics
 
 
 def log_metrics(
-    metrics: Dict, data_collector: DataCollector, encoder_trainer: EncoderTrainer
+    metrics: Dict,
+    data_collector: DataCollector,
+    encoder_trainer: EncoderTrainer,
+    train_iter: int,
 ):
     n_iter = len(metrics[list(metrics.keys())[0]])
 
@@ -30,7 +35,9 @@ def log_metrics(
         for key, val in metrics.items():
             wandb.log({key: val[i]})
 
-    wandb.log({"loss_control": encoder_trainer.loss_control(data_collector)})
+    wandb.log(
+        {"loss_control": encoder_trainer.loss_control(data_collector, train_iter)}
+    )
 
 
 def train():
@@ -48,9 +55,9 @@ def train():
 
             # Keep models on device until metrics are logged
             encoder_trainer.move_models_to_device(cfg.device)
-            metrics = optimize_encoder(data_collector, encoder_trainer)
+            metrics = optimize_encoder(data_collector, encoder_trainer, train_iter)
 
-            log_metrics(metrics, data_collector, encoder_trainer)
+            log_metrics(metrics, data_collector, encoder_trainer, train_iter)
             encoder_trainer.move_models_to_device(CPU)
     finally:
         data_collector.finish()

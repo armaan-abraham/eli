@@ -2,6 +2,7 @@ import torch
 from einops import einsum
 from jaxtyping import Float
 from torch import Tensor
+from torch.cuda.amp import GradScaler
 from torch.nn import init
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -12,11 +13,10 @@ from eli.utils import log_gpu_memory_usage
 PROMPT_PREFIX = """<|system|>
 You are an expert at predicting what a language model will say next.
 <|user|> Your task is to predict what another LLM will say, given a
-description of what the LLM is currently thinking. Provide your
-prediction and nothing else. LLM internal thoughts description:
+description of what the LLM is currently thinking: \" 
 """
 
-PROMPT_SUFFIX = """.
+PROMPT_SUFFIX = """\". Provide your prediction and nothing else.
 <|assistant|>"""
 
 PROMPT_PREFIX_CONTROL = """<|system|>
@@ -232,8 +232,13 @@ def kl_div(
     ), f"Proposed logits shape: {proposed_logits.shape}, Target logits shape: {target_logits.shape}"
     assert proposed_logits.ndim == 3
 
+    proposed_logits = proposed_logits.float()
+    target_logits = target_logits.float()
+
     proposed_log_probs = torch.nn.functional.log_softmax(proposed_logits, dim=-1)
     target_log_probs = torch.nn.functional.log_softmax(target_logits, dim=-1)
+    print("proposed log probs dtype", proposed_log_probs.dtype)
+    print("target log probs dtype", target_log_probs.dtype)
 
     kl_div = torch.nn.functional.kl_div(
         proposed_log_probs,
@@ -255,12 +260,13 @@ class EncoderTrainer:
         self.encoder_cfg = encoder_cfg
 
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.decoder_model_name)
-        self.encoder = Encoder(cfg, encoder_cfg).to(dtype=cfg.dtype, device=CPU)
-        self.decoder = AutoModelForCausalLM.from_pretrained(
-            cfg.decoder_model_name, torch_dtype=cfg.dtype
-        ).to(CPU)
-        # We'll keep the optimizer's state on the cfg-specified device, so
-        # transfer encoder to that device before initializing the optimizer.
+        # Initialize models in float32
+        self.encoder = Encoder(cfg, encoder_cfg).to(device=CPU)
+        self.decoder = AutoModelForCausalLM.from_pretrained(cfg.decoder_model_name).to(
+            CPU
+        )
+
+        # Move to device for optimizer initialization
         self.encoder.to(cfg.device)
         self.optimizer = torch.optim.AdamW(
             self.encoder.parameters(),
@@ -268,6 +274,8 @@ class EncoderTrainer:
             betas=encoder_cfg.betas,
             weight_decay=encoder_cfg.weight_decay,
         )
+        # Create a GradScaler for loss scaling with float16
+        self.scaler = GradScaler()
         self.encoder.to(CPU)
 
     def move_models_to_device(self, device: torch.device):
@@ -278,6 +286,7 @@ class EncoderTrainer:
         self,
         target_generated_tokens: Float[Tensor, "batch tok"],
         virtual_embeddings: Float[Tensor, "batch tok d_embed"],
+        train_iter: int = -1,
     ) -> Float[Tensor, "batch tok d_embed"]:
         # Generate tokens before virtual embeddings
         prefix_tokens = self.tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids.to(
@@ -297,6 +306,17 @@ class EncoderTrainer:
         input_tokens = torch.cat(
             [prefix_tokens, suffix_start_tokens, target_generated_tokens], dim=1
         )
+
+        # Only decode tokens on first iteration
+        if train_iter == 0:
+            # Decode the first entry of input_tokens
+            decoded_tokens = self.tokenizer.decode(input_tokens[0])
+            with open("decoded_tokens_encoder.txt", "w") as f:
+                f.write(
+                    "=== Decoded Tokens from assemble_decoder_context_embeddings ===\n"
+                )
+                f.write(decoded_tokens)
+                f.write("\n\n")
 
         embeddings = self.decoder.get_input_embeddings()
 
@@ -340,23 +360,26 @@ class EncoderTrainer:
         target_generated_tokens: Float[Tensor, "batch tok"],
         target_logits: Float[Tensor, "batch tok vocab"],
         target_acts: Float[Tensor, "batch tok d_model_target"],
+        train_iter: int = -1,
     ):
-        virtual_embeddings = self.encoder(target_acts)
+        # Use autocast for all model operations
+        with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
+            virtual_embeddings = self.encoder(target_acts)
 
-        decoder_context_embeddings, attention_mask = (
-            self.assemble_decoder_context_embeddings(
-                target_generated_tokens, virtual_embeddings
+            decoder_context_embeddings, attention_mask = (
+                self.assemble_decoder_context_embeddings(
+                    target_generated_tokens, virtual_embeddings, train_iter
+                )
             )
-        )
 
-        decoder_logits = self.decoder(
-            inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask
-        ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
+            decoder_logits = self.decoder(
+                inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask
+            ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
 
-        return kl_div(decoder_logits, target_logits)
+            return kl_div(decoder_logits, target_logits)
 
     @log_gpu_memory_usage
-    def train(self, data_collector: DataCollector):
+    def train(self, data_collector: DataCollector, train_iter: int = -1):
         # Load all data
         data = data_collector.data
 
@@ -386,18 +409,24 @@ class EncoderTrainer:
 
             self.optimizer.zero_grad()
 
-            batch_loss = self.loss(batch_tokens, batch_logits, batch_acts)
+            # Pass training iteration to loss function
+            batch_loss = self.loss(batch_tokens, batch_logits, batch_acts, train_iter)
             results["loss"].append(batch_loss.item())
 
-            batch_loss.backward()
+            # Use the scaler for the backward pass
+            self.scaler.scale(batch_loss).backward()
 
+            # Use the scaler for gradient clipping
+            self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), max_norm=0.5)
 
-            self.optimizer.step()
+            # Use the scaler for the optimizer step
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
         return results
 
-    def loss_control(self, data_collector: DataCollector):
+    def loss_control(self, data_collector: DataCollector, train_iter: int = -1):
         """Evaluates the loss of the decoder predictions without virtual
         embeddings produced by the encoder. This is to determine whether the
         encoder is actually useful to the decoder's predictions."""
@@ -414,19 +443,29 @@ class EncoderTrainer:
         )
         logits = target_logits[: self.cfg.train_batch_size_samples].to(self.cfg.device)
 
-        prefix_tokens = self.tokenizer(
-            PROMPT_PREFIX_CONTROL, return_tensors="pt"
-        ).input_ids.to(tokens.device)
+        with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
+            prefix_tokens = self.tokenizer(
+                PROMPT_PREFIX_CONTROL, return_tensors="pt"
+            ).input_ids.to(tokens.device)
 
-        prefix_tokens = prefix_tokens.repeat(tokens.shape[0], 1)
+            prefix_tokens = prefix_tokens.repeat(tokens.shape[0], 1)
 
-        input_tokens = torch.cat([prefix_tokens, tokens], dim=1)
+            input_tokens = torch.cat([prefix_tokens, tokens], dim=1)
 
-        with torch.no_grad():
-            decoder_logits = self.decoder(input_ids=input_tokens).logits[
-                :, -self.cfg.decoder_pred_len_toks :, :
-            ]
+            # Only decode tokens on first iteration
+            if train_iter == 0:
+                # Decode the first entry of input_tokens
+                decoded_tokens = self.tokenizer.decode(input_tokens[0])
+                with open("decoded_tokens_control.txt", "w") as f:
+                    f.write("=== Decoded Tokens from loss_control ===\n")
+                    f.write(decoded_tokens)
+                    f.write("\n\n")
 
-            loss = kl_div(decoder_logits, logits)
+            with torch.no_grad():
+                decoder_logits = self.decoder(input_ids=input_tokens).logits[
+                    :, -self.cfg.decoder_pred_len_toks :, :
+                ]
+
+                loss = kl_div(decoder_logits, logits)
 
         return loss.item()

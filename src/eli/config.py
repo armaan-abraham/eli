@@ -8,6 +8,7 @@ CPU = torch.device("cpu")
 dtypes = {
     "bfloat16": torch.bfloat16,
     "float32": torch.float32,
+    "float16": torch.float16,
 }
 
 
@@ -37,7 +38,7 @@ class Config:
     decoder_model_embed_dim: int = 128
 
     device: torch.device = torch.device("cuda")
-    dtype: torch.dtype = dtypes["bfloat16"]
+    dtype: torch.dtype = dtypes["float16"]
 
     site: str = "resid_pre"
     layer: int = 5
@@ -62,7 +63,7 @@ class EncoderConfig:
     d_head: int = 16
     d_mlp: int = 256
 
-    lr: float = 2e-4
+    lr: float = 1e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.95, 0.99)
 
