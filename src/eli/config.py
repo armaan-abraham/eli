@@ -32,7 +32,7 @@ class Config:
     train_batch_size_samples: int = 4096
     target_model_batch_size_samples: int = 32768
 
-    buffer_size_samples: int = 131072
+    buffer_size_samples: int = 32768
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128

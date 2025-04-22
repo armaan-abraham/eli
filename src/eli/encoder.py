@@ -2,7 +2,7 @@ import torch
 from einops import einsum
 from jaxtyping import Float
 from torch import Tensor
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch.nn import init
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -223,62 +223,33 @@ class Encoder(torch.nn.Module):
         return x_out
 
 
-def kl_div(
-    proposed_logits: Float[Tensor, "batch tok vocab"],
-    target_logits: Float[Tensor, "batch tok vocab"],
-):
-    assert (
-        proposed_logits.shape == target_logits.shape
-    ), f"Proposed logits shape: {proposed_logits.shape}, Target logits shape: {target_logits.shape}"
-    assert proposed_logits.ndim == 3
-
-    proposed_logits = proposed_logits.float()
-    target_logits = target_logits.float()
-
-    proposed_log_probs = torch.nn.functional.log_softmax(proposed_logits, dim=-1)
-    target_log_probs = torch.nn.functional.log_softmax(target_logits, dim=-1)
-
-    kl_div = torch.nn.functional.kl_div(
-        proposed_log_probs,
-        target_log_probs,
-        reduction="sum",
-        log_target=True,
-    ) / (proposed_logits.shape[0] * proposed_logits.shape[1])
-
-    return kl_div
-
-
-class EncoderTrainer:
-    def __init__(
-        self,
-        cfg: Config,
-        encoder_cfg: EncoderConfig,
-    ):
-        self.cfg = cfg
-        self.encoder_cfg = encoder_cfg
-
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.decoder_model_name)
-        # Initialize models in float32
+class EncoderDecoder(torch.nn.Module):
+    def __init__(self, cfg: Config, encoder_cfg: EncoderConfig, tokenizer: AutoTokenizer):
+        super().__init__()
         self.encoder = Encoder(cfg, encoder_cfg).to(device=CPU)
         self.decoder = AutoModelForCausalLM.from_pretrained(cfg.decoder_model_name).to(
             CPU
         )
+        # Freeze the decoder parameters
+        for param in self.decoder.parameters():
+            param.requires_grad = False
+            
+        self.tokenizer = tokenizer
+        self.encoder_cfg = encoder_cfg
+        self.cfg = cfg
 
-        # Move to device for optimizer initialization
-        self.encoder.to(cfg.device)
-        self.optimizer = torch.optim.AdamW(
-            self.encoder.parameters(),
-            lr=encoder_cfg.lr,
-            betas=encoder_cfg.betas,
-            weight_decay=encoder_cfg.weight_decay,
+    def forward(self, target_acts: Float[Tensor, "batch d_model"], target_generated_tokens: Float[Tensor, "batch tok"], train_iter: int = -1):
+        # Use the encoder_decoder's encode method instead of direct encoder access
+        virtual_embeddings = self.encoder(target_acts)
+
+        decoder_context_embeddings, attention_mask = (
+            self.assemble_decoder_context_embeddings(
+                target_generated_tokens, virtual_embeddings, train_iter
+            )
         )
-        # Create a GradScaler for loss scaling with float16
-        self.scaler = GradScaler()
-        self.encoder.to(CPU)
 
-    def move_models_to_device(self, device: torch.device):
-        self.encoder.to(device)
-        self.decoder.to(device)
+        decoder_logits = self.decoder(inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask).logits[:, -self.cfg.decoder_pred_len_toks :, :]
+        return decoder_logits, virtual_embeddings
 
     def assemble_decoder_context_embeddings(
         self,
@@ -316,7 +287,13 @@ class EncoderTrainer:
                 f.write(decoded_tokens)
                 f.write("\n\n")
 
-        embeddings = self.decoder.get_input_embeddings()
+        # Grab the embedding layer from the *base* decoder (handles DataParallel)
+        decoder_base = (
+            self.decoder.module
+            if isinstance(self.decoder, torch.nn.DataParallel)
+            else self.decoder
+        )
+        embeddings = decoder_base.get_input_embeddings()
 
         input_embeds = embeddings(input_tokens)
 
@@ -353,6 +330,64 @@ class EncoderTrainer:
 
         return combined_embeds, attention_mask
 
+def kl_div(
+    proposed_logits: Float[Tensor, "batch tok vocab"],
+    target_logits: Float[Tensor, "batch tok vocab"],
+):
+    assert (
+        proposed_logits.shape == target_logits.shape
+    ), f"Proposed logits shape: {proposed_logits.shape}, Target logits shape: {target_logits.shape}"
+    assert proposed_logits.ndim == 3
+
+    proposed_logits = proposed_logits.float()
+    target_logits = target_logits.float()
+
+    proposed_log_probs = torch.nn.functional.log_softmax(proposed_logits, dim=-1)
+    target_log_probs = torch.nn.functional.log_softmax(target_logits, dim=-1)
+
+    kl_div = torch.nn.functional.kl_div(
+        proposed_log_probs,
+        target_log_probs,
+        reduction="sum",
+        log_target=True,
+    ) / (proposed_logits.shape[0] * proposed_logits.shape[1])
+
+    return kl_div
+
+
+class EncoderTrainer:
+    def __init__(
+        self,
+        cfg: Config,
+        encoder_cfg: EncoderConfig,
+    ):
+        self.cfg = cfg
+        self.encoder_cfg = encoder_cfg
+
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.decoder_model_name)
+
+        self.encoder_decoder = EncoderDecoder(cfg, encoder_cfg, self.tokenizer)
+
+        if cfg.device.type == "cuda" and torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs for encoder decoder")
+            self.encoder_decoder = torch.nn.DataParallel(self.encoder_decoder)
+
+        self.encoder_decoder.to(self.cfg.device)
+
+        self.optimizer = torch.optim.AdamW(
+            self.encoder_decoder.parameters(),
+            lr=encoder_cfg.lr,
+            betas=encoder_cfg.betas,
+            weight_decay=encoder_cfg.weight_decay,
+        )
+
+        self.encoder_decoder.to(CPU)
+
+        self.scaler = GradScaler()
+
+    def move_models_to_device(self, device: torch.device):
+        self.encoder_decoder.to(device)
+
     def loss(
         self,
         target_generated_tokens: Float[Tensor, "batch tok"],
@@ -362,18 +397,7 @@ class EncoderTrainer:
     ):
         # Use autocast for all model operations
         with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
-            virtual_embeddings = self.encoder(target_acts)
-
-            decoder_context_embeddings, attention_mask = (
-                self.assemble_decoder_context_embeddings(
-                    target_generated_tokens, virtual_embeddings, train_iter
-                )
-            )
-
-            decoder_logits = self.decoder(
-                inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask
-            ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
-
+            decoder_logits, virtual_embeddings = self.encoder_decoder(target_acts, target_generated_tokens, train_iter)
             return kl_div(decoder_logits, target_logits)
 
     @log_gpu_memory_usage
@@ -407,20 +431,18 @@ class EncoderTrainer:
 
             self.optimizer.zero_grad()
 
-            # Pass training iteration to loss function
             batch_loss = self.loss(batch_tokens, batch_logits, batch_acts, train_iter)
             results["loss"].append(batch_loss.item())
 
-            # Use the scaler for the backward pass
             self.scaler.scale(batch_loss).backward()
 
-            # Use the scaler for gradient clipping
             self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), max_norm=0.5)
 
-            # Use the scaler for the optimizer step
+            torch.nn.utils.clip_grad_norm_(self.encoder_decoder.parameters(), max_norm=0.5)
+
             self.scaler.step(self.optimizer)
             self.scaler.update()
+        
 
         return results
 
@@ -460,10 +482,19 @@ class EncoderTrainer:
                     f.write("\n\n")
 
             with torch.no_grad():
-                decoder_logits = self.decoder(input_ids=input_tokens).logits[
+                # Use encoder_decoder.decode instead of directly accessing self.decoder
+                decoder_logits = self.get_decoder()(input_ids=input_tokens).logits[
                     :, -self.cfg.decoder_pred_len_toks :, :
                 ]
 
                 loss = kl_div(decoder_logits, logits)
-
+            
         return loss.item()
+
+    def get_decoder(self):
+        """Get the decoder model, handling DataParallel if present."""
+        if isinstance(self.encoder_decoder, torch.nn.DataParallel):
+            return self.encoder_decoder.module.decoder
+        return self.encoder_decoder.decoder
+
+

@@ -13,7 +13,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 def log_gpu_memory_usage(func: F) -> F:
     """
-    Decorator that logs the maximum GPU memory usage of a function.
+    Decorator that logs the maximum GPU memory usage of a function across all GPUs.
     Only works if CUDA is available.
     """
 
@@ -25,24 +25,29 @@ def log_gpu_memory_usage(func: F) -> F:
             )
             return func(*args, **kwargs)
 
-        # Log initial memory usage
+        # Get number of GPUs
+        num_gpus = torch.cuda.device_count()
+        
+        # Log initial memory usage for all GPUs
         torch.cuda.reset_peak_memory_stats()
-        initial_memory = torch.cuda.memory_allocated()
+        initial_memories = [torch.cuda.memory_allocated(i) for i in range(num_gpus)]
 
         start_time = time.time()
         result = func(*args, **kwargs)
 
-        # Get peak memory usage
-        peak_memory = torch.cuda.max_memory_allocated()
-        used_memory = peak_memory - initial_memory
-
-        # Convert to more readable format (MB)
-        peak_memory_gb = peak_memory / (1024**3)
-        used_memory_gb = used_memory / (1024**3)
-
         logger.info(f"Function: {func.__name__}")
-        logger.info(f"Peak GPU memory: {peak_memory_gb:.2f} GB")
-        logger.info(f"Used GPU memory: {used_memory_gb:.2f} GB")
+        
+        # Log memory usage for each GPU
+        for gpu_id in range(num_gpus):
+            # Get peak memory usage for this GPU
+            peak_memory = torch.cuda.max_memory_allocated(gpu_id)
+            used_memory = peak_memory - initial_memories[gpu_id]
+
+            # Convert to more readable format (GB)
+            peak_memory_gb = peak_memory / (1024**3)
+            used_memory_gb = used_memory / (1024**3)
+
+            logger.info(f"GPU {gpu_id} - Peak memory: {peak_memory_gb:.2f} GB, Used memory: {used_memory_gb:.2f} GB")
 
         return result
 
