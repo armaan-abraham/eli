@@ -308,9 +308,6 @@ class DataCollector:
                 # Create an attention mask of all 1s (all tokens are valid content)
                 attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
 
-                print("generating")
-                print(torch.any(batch_toks[:, -1] == self.tokenizer.eos_token_id))
-
                 batch_toks_with_gen = self.target_model.generate(
                     batch_toks,
                     attention_mask=attention_mask,
@@ -323,19 +320,12 @@ class DataCollector:
                     :, -self.cfg.target_generation_len_toks :
                 ]
 
-                print(
-                    torch.any(batch_toks_with_gen[:, -1] == self.tokenizer.eos_token_id)
-                )
-
-                print("collecting logits")
-
                 # Collect logits of target model
                 with torch.no_grad():
                     self.target_logits[start_idx:end_idx] = self.target_model(
                         batch_toks_with_gen
                     ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
 
-                print("done")
 
         self.move_models_to_device(CPU)
 

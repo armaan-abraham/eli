@@ -237,8 +237,6 @@ def kl_div(
 
     proposed_log_probs = torch.nn.functional.log_softmax(proposed_logits, dim=-1)
     target_log_probs = torch.nn.functional.log_softmax(target_logits, dim=-1)
-    print("proposed log probs dtype", proposed_log_probs.dtype)
-    print("target log probs dtype", target_log_probs.dtype)
 
     kl_div = torch.nn.functional.kl_div(
         proposed_log_probs,
