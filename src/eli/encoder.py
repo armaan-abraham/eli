@@ -279,12 +279,14 @@ class EncoderTrainer:
         virtual_embeddings: Float[Tensor, "batch tok d_embed"],
     ) -> Float[Tensor, "batch tok d_embed"]:
         # Generate tokens before virtual embeddings
-        prefix_tokens = self.tokenizer(PROMPT_PREFIX, return_tensors="pt").input_ids
+        prefix_tokens = self.tokenizer(
+            PROMPT_PREFIX, return_tensors="pt"
+        ).input_ids.to(target_generated_tokens.device)
 
         # Generate tokens after virtual embeddings (excluding target model generation)
         suffix_start_tokens = self.tokenizer(
             PROMPT_SUFFIX, return_tensors="pt"
-        ).input_ids
+        ).input_ids.to(target_generated_tokens.device)
 
         prefix_tokens = prefix_tokens.repeat(target_generated_tokens.shape[0], 1)
         suffix_start_tokens = suffix_start_tokens.repeat(
@@ -410,7 +412,7 @@ class EncoderTrainer:
 
         prefix_tokens = self.tokenizer(
             PROMPT_PREFIX_CONTROL, return_tensors="pt"
-        ).input_ids
+        ).input_ids.to(tokens.device)
 
         prefix_tokens = prefix_tokens.repeat(tokens.shape[0], 1)
 

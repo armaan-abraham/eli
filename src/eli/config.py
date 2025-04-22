@@ -13,13 +13,13 @@ dtypes = {
 
 @dataclass
 class Config:
-    num_train_iter: int = 2
+    num_train_iter: int = 100
 
     seed: int = 42
 
     dataset_name: str = "allenai/c4"
     dataset_column_name: str = "text"
-    dataset_batch_size_entries: int = 2  # TODO: increase
+    dataset_batch_size_entries: int = 20
 
     target_model_name: str = "EleutherAI/pythia-14m"
     decoder_model_name: str = "EleutherAI/pythia-14m"
@@ -28,19 +28,19 @@ class Config:
     decoder_pred_len_toks: int = 2
     encoding_len_toks: int = 2
 
-    train_batch_size_samples: int = 2
-    target_model_batch_size_samples: int = 2
+    train_batch_size_samples: int = 4096
+    target_model_batch_size_samples: int = 32768
 
-    buffer_size_samples: int = 16
+    buffer_size_samples: int = 131072
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128
 
-    device: torch.device = CPU
+    device: torch.device = torch.device("cuda")
     dtype: torch.dtype = dtypes["bfloat16"]
 
     site: str = "resid_pre"
-    layer: int = 1
+    layer: int = 5
 
     @property
     def target_generation_len_toks(self):
@@ -62,7 +62,7 @@ class EncoderConfig:
     d_head: int = 32
     d_mlp: int = 512
 
-    lr: float = 1e-4
+    lr: float = 2e-4
     weight_decay: float = 1e-2
 
 
