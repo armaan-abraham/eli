@@ -311,14 +311,12 @@ class EncoderDecoder(torch.nn.Module):
 
         # Only decode tokens on first iteration
         if train_iter == 0:
-            # Decode the first entry of input_tokens
-            decoded_tokens = self.tokenizer.decode(input_tokens[0])
-            with open("decoded_tokens_encoder.txt", "w") as f:
-                f.write(
-                    "=== Decoded Tokens from assemble_decoder_context_embeddings ===\n"
-                )
-                f.write(decoded_tokens)
-                f.write("\n\n")
+            log_decoded_tokens(
+                self.tokenizer, 
+                input_tokens, 
+                "decoded_tokens_encoder.txt", 
+                "assemble_decoder_context_embeddings"
+            )
 
         embeddings = get_embeddings_from_decoder(self.decoder)
 
@@ -377,8 +375,8 @@ def kl_div(
     proposed_logits = proposed_logits.float()
     target_logits = target_logits.float()
 
-    proposed_probs = torch.nn.functional.softmax(proposed_logits, dim=-1) + 1e-8
-    target_probs = torch.nn.functional.softmax(target_logits, dim=-1) + 1e-8
+    proposed_probs = torch.nn.functional.softmax(proposed_logits, dim=-1) + 1e-9
+    target_probs = torch.nn.functional.softmax(target_logits, dim=-1) + 1e-9
 
     kl_div = torch.nn.functional.kl_div(
         torch.log(proposed_probs),
@@ -437,6 +435,7 @@ class EncoderTrainer:
                 decoder_logits_encoding_tokens,
                 virtual_embeddings,
             ) = self.encoder_decoder(target_acts, target_generated_tokens, train_iter)
+
             # Compute KL loss between decoder predictions and target generations
             target_prediction_loss = kl_div(decoder_logits_target_tokens, target_logits)
 
@@ -448,7 +447,7 @@ class EncoderTrainer:
 
             # Take weighted sum of decoder token embeddings by probability
             token_embeddings = get_embeddings_from_decoder(
-                self.decoder
+                self.get_decoder()
             ).weight  # [vocab_size, d_embed]
 
             # Compute weighted sum of token embeddings by probability
@@ -575,12 +574,12 @@ class EncoderTrainer:
 
             # Only decode tokens on first iteration
             if train_iter == 0:
-                # Decode the first entry of input_tokens
-                decoded_tokens = self.tokenizer.decode(input_tokens[0])
-                with open("decoded_tokens_control.txt", "w") as f:
-                    f.write("=== Decoded Tokens from loss_control ===\n")
-                    f.write(decoded_tokens)
-                    f.write("\n\n")
+                log_decoded_tokens(
+                    self.tokenizer, 
+                    input_tokens, 
+                    "decoded_tokens_control.txt", 
+                    "loss_control"
+                )
 
             with torch.no_grad():
                 # Use encoder_decoder.decode instead of directly accessing self.decoder
@@ -628,3 +627,19 @@ def get_gradient_stats(parameters):
         "grad_abs_max": grad_abs_max,
         "grad_abs_min": grad_abs_min,
     }
+
+def log_decoded_tokens(tokenizer, tokens, file_path, source_name):
+    """
+    Decode and log tokens to a file for debugging purposes.
+    
+    Args:
+        tokenizer: The tokenizer to use for decoding
+        tokens: The tokens to decode (first batch entry will be used)
+        file_path: Path to the output file
+        source_name: Name of the source function/method for context
+    """
+    decoded_tokens = tokenizer.decode(tokens[0])
+    with open(file_path, "w") as f:
+        f.write(f"=== Decoded Tokens from {source_name} ===\n")
+        f.write(decoded_tokens)
+        f.write("\n\n")
