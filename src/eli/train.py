@@ -61,9 +61,17 @@ def train():
 
             log_metrics(metrics, data_collector, encoder_trainer, train_iter)
             encoder_trainer.move_models_to_device(CPU)
+
     finally:
         data_collector.finish()
         wandb.finish()
+
+        if cfg.save_encoder_path:
+            save_path = cfg.save_encoder_path
+
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"Saving encoder to {save_path}")
+            encoder_trainer.save_encoder(save_path)
 
 
 if __name__ == "__main__":

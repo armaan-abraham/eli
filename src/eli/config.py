@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 
 import torch
 import transformer_lens
@@ -10,6 +12,8 @@ dtypes = {
     "float32": torch.float32,
     "float16": torch.float16,
 }
+
+SAVE_DIR = Path(__file__).parent / "saved_models"
 
 
 @dataclass
@@ -45,6 +49,9 @@ class Config:
     layer: int = 5
 
     dinalar_weight: float = 1e-2
+
+    # Use Optional[Path] instead of str, with None as default
+    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
 
     @property
     def target_generation_len_toks(self):

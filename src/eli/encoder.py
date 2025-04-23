@@ -312,10 +312,10 @@ class EncoderDecoder(torch.nn.Module):
         # Only decode tokens on first iteration
         if train_iter == 0:
             log_decoded_tokens(
-                self.tokenizer, 
-                input_tokens, 
-                "decoded_tokens_encoder.txt", 
-                "assemble_decoder_context_embeddings"
+                self.tokenizer,
+                input_tokens,
+                "decoded_tokens_encoder.txt",
+                "assemble_decoder_context_embeddings",
             )
 
         embeddings = get_embeddings_from_decoder(self.decoder)
@@ -575,10 +575,10 @@ class EncoderTrainer:
             # Only decode tokens on first iteration
             if train_iter == 0:
                 log_decoded_tokens(
-                    self.tokenizer, 
-                    input_tokens, 
-                    "decoded_tokens_control.txt", 
-                    "loss_control"
+                    self.tokenizer,
+                    input_tokens,
+                    "decoded_tokens_control.txt",
+                    "loss_control",
                 )
 
             with torch.no_grad():
@@ -596,6 +596,25 @@ class EncoderTrainer:
         if isinstance(self.encoder_decoder, torch.nn.DataParallel):
             return self.encoder_decoder.module.decoder
         return self.encoder_decoder.decoder
+
+    def save_encoder(self, save_path):
+        """
+        Save just the encoder part of the encoder-decoder model.
+
+        Args:
+            save_path: Path where the model should be saved
+        """
+        # Get the encoder, accounting for DataParallel
+        if isinstance(self.encoder_decoder, torch.nn.DataParallel):
+            encoder = self.encoder_decoder.module.encoder
+        else:
+            encoder = self.encoder_decoder.encoder
+
+        # Move to CPU before saving
+        encoder = encoder.to(CPU)
+
+        # Save the model
+        torch.save(encoder.state_dict(), save_path)
 
 
 def get_gradient_stats(parameters):
@@ -628,10 +647,11 @@ def get_gradient_stats(parameters):
         "grad_abs_min": grad_abs_min,
     }
 
+
 def log_decoded_tokens(tokenizer, tokens, file_path, source_name):
     """
     Decode and log tokens to a file for debugging purposes.
-    
+
     Args:
         tokenizer: The tokenizer to use for decoding
         tokens: The tokens to decode (first batch entry will be used)
