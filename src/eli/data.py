@@ -326,7 +326,6 @@ class DataCollector:
                         batch_toks_with_gen
                     ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
 
-
         self.move_models_to_device(CPU)
 
     @property

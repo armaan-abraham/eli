@@ -27,7 +27,7 @@ def log_gpu_memory_usage(func: F) -> F:
 
         # Get number of GPUs
         num_gpus = torch.cuda.device_count()
-        
+
         # Log initial memory usage for all GPUs
         torch.cuda.reset_peak_memory_stats()
         initial_memories = [torch.cuda.memory_allocated(i) for i in range(num_gpus)]
@@ -36,7 +36,7 @@ def log_gpu_memory_usage(func: F) -> F:
         result = func(*args, **kwargs)
 
         logger.info(f"Function: {func.__name__}")
-        
+
         # Log memory usage for each GPU
         for gpu_id in range(num_gpus):
             # Get peak memory usage for this GPU
@@ -47,7 +47,9 @@ def log_gpu_memory_usage(func: F) -> F:
             peak_memory_gb = peak_memory / (1024**3)
             used_memory_gb = used_memory / (1024**3)
 
-            logger.info(f"GPU {gpu_id} - Peak memory: {peak_memory_gb:.2f} GB, Used memory: {used_memory_gb:.2f} GB")
+            logger.info(
+                f"GPU {gpu_id} - Peak memory: {peak_memory_gb:.2f} GB, Used memory: {used_memory_gb:.2f} GB"
+            )
 
         return result
 

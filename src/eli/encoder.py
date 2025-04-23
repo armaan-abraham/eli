@@ -223,8 +223,18 @@ class Encoder(torch.nn.Module):
         return x_out
 
 
+def get_embeddings_from_decoder(decoder: torch.nn.Module):
+    # Grab the embedding layer from the *base* decoder (handles DataParallel)
+    decoder_base = (
+        decoder.module if isinstance(decoder, torch.nn.DataParallel) else decoder
+    )
+    return decoder_base.get_input_embeddings()
+
+
 class EncoderDecoder(torch.nn.Module):
-    def __init__(self, cfg: Config, encoder_cfg: EncoderConfig, tokenizer: AutoTokenizer):
+    def __init__(
+        self, cfg: Config, encoder_cfg: EncoderConfig, tokenizer: AutoTokenizer
+    ):
         super().__init__()
         self.encoder = Encoder(cfg, encoder_cfg).to(device=CPU)
         self.decoder = AutoModelForCausalLM.from_pretrained(cfg.decoder_model_name).to(
@@ -233,23 +243,46 @@ class EncoderDecoder(torch.nn.Module):
         # Freeze the decoder parameters
         for param in self.decoder.parameters():
             param.requires_grad = False
-            
+
         self.tokenizer = tokenizer
         self.encoder_cfg = encoder_cfg
         self.cfg = cfg
 
-    def forward(self, target_acts: Float[Tensor, "batch d_model"], target_generated_tokens: Float[Tensor, "batch tok"], train_iter: int = -1):
+    def forward(
+        self,
+        target_acts: Float[Tensor, "batch d_model"],
+        target_generated_tokens: Float[Tensor, "batch tok"],
+        train_iter: int = -1,
+    ):
         # Use the encoder_decoder's encode method instead of direct encoder access
         virtual_embeddings = self.encoder(target_acts)
 
-        decoder_context_embeddings, attention_mask = (
+        decoder_context_embeddings, attention_mask, fixed_token_lens = (
             self.assemble_decoder_context_embeddings(
                 target_generated_tokens, virtual_embeddings, train_iter
             )
         )
 
-        decoder_logits = self.decoder(inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask).logits[:, -self.cfg.decoder_pred_len_toks :, :]
-        return decoder_logits, virtual_embeddings
+        decoder_logits = self.decoder(
+            inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask
+        ).logits
+
+        # Extract target logits
+        decoder_logits_target_tokens = decoder_logits[
+            :, -self.cfg.decoder_pred_len_toks :, :
+        ]
+
+        # Extract encoding logits
+        prefix_len = fixed_token_lens["prefix_tokens_len"]
+        decoder_logits_encoding_tokens = decoder_logits[
+            :, prefix_len : (prefix_len + self.cfg.encoding_len_toks), :
+        ]
+
+        return (
+            decoder_logits_target_tokens,
+            decoder_logits_encoding_tokens,
+            virtual_embeddings,
+        )
 
     def assemble_decoder_context_embeddings(
         self,
@@ -287,13 +320,7 @@ class EncoderDecoder(torch.nn.Module):
                 f.write(decoded_tokens)
                 f.write("\n\n")
 
-        # Grab the embedding layer from the *base* decoder (handles DataParallel)
-        decoder_base = (
-            self.decoder.module
-            if isinstance(self.decoder, torch.nn.DataParallel)
-            else self.decoder
-        )
-        embeddings = decoder_base.get_input_embeddings()
+        embeddings = get_embeddings_from_decoder(self.decoder)
 
         input_embeds = embeddings(input_tokens)
 
@@ -328,7 +355,15 @@ class EncoderDecoder(torch.nn.Module):
             combined_embeds.shape[1] == expected_length
         ), f"Combined embeddings length mismatch: {combined_embeds.shape[1]} vs expected {expected_length}"
 
-        return combined_embeds, attention_mask
+        return (
+            combined_embeds,
+            attention_mask,
+            {
+                "prefix_tokens_len": prefix_tokens.shape[1],
+                "suffix_start_tokens_len": suffix_start_tokens.shape[1],
+            },
+        )
+
 
 def kl_div(
     proposed_logits: Float[Tensor, "batch tok vocab"],
@@ -373,7 +408,7 @@ class EncoderTrainer:
             self.encoder_decoder = torch.nn.DataParallel(self.encoder_decoder)
 
         self.encoder_decoder.to(self.cfg.device)
-        
+
         self.optimizer = torch.optim.AdamW(
             self.encoder_decoder.parameters(),
             lr=encoder_cfg.lr,
@@ -397,8 +432,44 @@ class EncoderTrainer:
     ):
         # Use autocast for all model operations
         with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
-            decoder_logits, virtual_embeddings = self.encoder_decoder(target_acts, target_generated_tokens, train_iter)
-            return kl_div(decoder_logits, target_logits)
+            (
+                decoder_logits_target_tokens,
+                decoder_logits_encoding_tokens,
+                virtual_embeddings,
+            ) = self.encoder_decoder(target_acts, target_generated_tokens, train_iter)
+            # Compute KL loss between decoder predictions and target generations
+            target_prediction_loss = kl_div(decoder_logits_target_tokens, target_logits)
+
+            # Compute MSE loss between encoding embeddings and token embeddings
+            # corresponding to decoder logits on encodings aka Direct Natural Language Regularization (dinalar)
+            decoder_probs_encoding_tokens = torch.nn.functional.softmax(
+                decoder_logits_encoding_tokens, dim=-1
+            )
+
+            # Take weighted sum of decoder token embeddings by probability
+            token_embeddings = get_embeddings_from_decoder(
+                self.decoder
+            ).weight  # [vocab_size, d_embed]
+
+            # Compute weighted sum of token embeddings by probability
+            # decoder_probs_encoding_tokens: [batch, encoding_len_toks, vocab_size]
+            # token_embeddings: [vocab_size, d_embed]
+            weighted_token_embeddings = einsum(
+                decoder_probs_encoding_tokens,
+                token_embeddings,
+                "batch tok vocab, vocab d_embed -> batch tok d_embed",
+            )
+
+            # Compute MSE loss between virtual embeddings and weighted token embeddings
+            dinalar_loss = torch.nn.functional.mse_loss(
+                virtual_embeddings, weighted_token_embeddings, reduction="mean"
+            )
+
+            return (
+                target_prediction_loss + self.cfg.dinalar_weight * dinalar_loss,
+                target_prediction_loss,
+                dinalar_loss,
+            )
 
     @log_gpu_memory_usage
     def train(self, data_collector: DataCollector, train_iter: int = -1):
@@ -415,6 +486,8 @@ class EncoderTrainer:
 
         results = {
             "loss": [],
+            "target_prediction_loss": [],
+            "dinalar_loss": [],
             "grad_norm": [],
             "grad_abs_max": [],
             "grad_abs_min": [],
@@ -436,18 +509,24 @@ class EncoderTrainer:
 
             self.optimizer.zero_grad()
 
-            batch_loss = self.loss(batch_tokens, batch_logits, batch_acts, train_iter)
-            results["loss"].append(batch_loss.item())
+            loss, target_prediction_loss, dinalar_loss = self.loss(
+                batch_tokens, batch_logits, batch_acts, train_iter
+            )
 
-            self.scaler.scale(batch_loss).backward()
+            self.scaler.scale(loss).backward()
 
             self.scaler.unscale_(self.optimizer)
 
-            torch.nn.utils.clip_grad_norm_(self.encoder_decoder.parameters(), max_norm=0.5)
+            torch.nn.utils.clip_grad_norm_(
+                self.encoder_decoder.parameters(), max_norm=0.5
+            )
 
             grad_stats = get_gradient_stats(self.encoder_decoder.parameters())
-            
-            # Add gradient statistics to results
+
+            # Save results for logging
+            results["loss"].append(loss.item())
+            results["target_prediction_loss"].append(target_prediction_loss.item())
+            results["dinalar_loss"].append(dinalar_loss.item())
             results["grad_norm"].append(grad_stats["grad_norm"])
             results["grad_abs_max"].append(grad_stats["grad_abs_max"])
             results["grad_abs_min"].append(grad_stats["grad_abs_min"])
@@ -458,7 +537,9 @@ class EncoderTrainer:
             self.scaler.update()
 
         lens = [len(results[key]) for key in results]
-        assert all(l == lens[0] for l in lens), f"All lengths must be the same, got {lens}"
+        assert all(
+            l == lens[0] for l in lens
+        ), f"All lengths must be the same, got {lens}"
 
         print("Length:", lens[0])
 
@@ -479,7 +560,9 @@ class EncoderTrainer:
         tokens = target_generated_tokens[: self.cfg.control_batch_size_samples].to(
             self.cfg.device
         )
-        logits = target_logits[: self.cfg.control_batch_size_samples].to(self.cfg.device)
+        logits = target_logits[: self.cfg.control_batch_size_samples].to(
+            self.cfg.device
+        )
 
         with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
             prefix_tokens = self.tokenizer(
@@ -506,7 +589,7 @@ class EncoderTrainer:
                 ]
 
                 loss = kl_div(decoder_logits, logits)
-            
+
         return loss.item()
 
     def get_decoder(self):
@@ -515,30 +598,33 @@ class EncoderTrainer:
             return self.encoder_decoder.module.decoder
         return self.encoder_decoder.decoder
 
+
 def get_gradient_stats(parameters):
     """
     Calculate gradient statistics for the given parameters.
-    
+
     Args:
         parameters: Iterator over parameters with gradients
-        
+
     Returns:
         Dictionary containing gradient norm, absolute max, and absolute min
     """
     grads = [p.grad.detach() for p in parameters if p.grad is not None]
-    
+
     # Flatten gradients
     flat_grads = torch.cat([g.flatten() for g in grads])
-    
+
     # Calculate statistics
     grad_norm = torch.norm(flat_grads, p=2)
     grad_abs_max = torch.max(torch.abs(flat_grads))
-    grad_abs_min = torch.min(torch.abs(flat_grads[flat_grads != 0] if torch.any(flat_grads != 0) else flat_grads))
-    
+    grad_abs_min = torch.min(
+        torch.abs(
+            flat_grads[flat_grads != 0] if torch.any(flat_grads != 0) else flat_grads
+        )
+    )
+
     return {
         "grad_norm": grad_norm,
-        "grad_abs_max": grad_abs_max, 
-        "grad_abs_min": grad_abs_min
+        "grad_abs_max": grad_abs_max,
+        "grad_abs_min": grad_abs_min,
     }
-
-

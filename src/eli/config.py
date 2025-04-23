@@ -44,6 +44,8 @@ class Config:
     site: str = "resid_pre"
     layer: int = 5
 
+    dinalar_weight: float = 1e-2
+
     @property
     def target_generation_len_toks(self):
         return self.decoder_pred_len_toks - 1
@@ -55,6 +57,7 @@ class Config:
     @property
     def num_train_iter(self):
         return self.num_train_samples // self.buffer_size_samples + 1
+
 
 cfg = Config()
 

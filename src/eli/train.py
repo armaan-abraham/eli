@@ -42,7 +42,6 @@ def log_metrics(
         wandb.log(log_dict)
 
 
-
 def train():
     data_collector = DataCollector(cfg)
     encoder_trainer = EncoderTrainer(cfg, encoder_cfg)
