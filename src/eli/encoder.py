@@ -476,10 +476,10 @@ class EncoderTrainer:
         # No need to load activations as we are not using the encoder
 
         # Evaluate on one batch
-        tokens = target_generated_tokens[: self.cfg.train_batch_size_samples].to(
+        tokens = target_generated_tokens[: self.cfg.control_batch_size_samples].to(
             self.cfg.device
         )
-        logits = target_logits[: self.cfg.train_batch_size_samples].to(self.cfg.device)
+        logits = target_logits[: self.cfg.control_batch_size_samples].to(self.cfg.device)
 
         with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
             prefix_tokens = self.tokenizer(

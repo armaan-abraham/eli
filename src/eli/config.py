@@ -14,7 +14,7 @@ dtypes = {
 
 @dataclass
 class Config:
-    num_train_iter: int = 100
+    num_train_samples: int = int(1e7)
 
     seed: int = 42
 
@@ -29,7 +29,8 @@ class Config:
     decoder_pred_len_toks: int = 2
     encoding_len_toks: int = 2
 
-    train_batch_size_samples: int = 8192
+    train_batch_size_samples: int = 16384
+    control_batch_size_samples: int = 4096
     target_model_batch_size_samples: int = 32768
 
     buffer_size_samples: int = 131072
@@ -51,6 +52,9 @@ class Config:
     def act_name(self) -> str:
         return transformer_lens.utils.get_act_name(self.site, self.layer)
 
+    @property
+    def num_train_iter(self):
+        return self.num_train_samples // self.buffer_size_samples + 1
 
 cfg = Config()
 
@@ -63,7 +67,7 @@ class EncoderConfig:
     d_head: int = 16
     d_mlp: int = 256
 
-    lr: float = 5e-4
+    lr: float = 1e-3
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.99)
 
