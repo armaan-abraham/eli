@@ -18,7 +18,7 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(1e7)
+    num_train_samples: int = int(1e6)
 
     seed: int = 42
 
@@ -33,9 +33,9 @@ class Config:
     decoder_pred_len_toks: int = 2
     encoding_len_toks: int = 2
 
-    train_batch_size_samples: int = 16384
+    train_batch_size_samples: int = 8192 # Split across GPUs
     control_batch_size_samples: int = 4096
-    target_model_batch_size_samples: int = 32768
+    target_model_batch_size_samples: int = 16384 # Per GPU
 
     buffer_size_samples: int = 131072
 
@@ -48,10 +48,9 @@ class Config:
     site: str = "resid_pre"
     layer: int = 5
 
-    dinalar_weight: float = 1e-2
+    dinalar_weight: float = 0
 
-    # Use Optional[Path] instead of str, with None as default
-    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
+    save_encoder_path: Optional[Path] = None
 
     @property
     def target_generation_len_toks(self):

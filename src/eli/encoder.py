@@ -439,6 +439,8 @@ class EncoderTrainer:
             # Compute KL loss between decoder predictions and target generations
             target_prediction_loss = kl_div(decoder_logits_target_tokens, target_logits)
 
+            loss = target_prediction_loss
+
             # Compute MSE loss between encoding embeddings and token embeddings
             # corresponding to decoder logits on encodings aka Direct Natural Language Regularization (dinalar)
             decoder_probs_encoding_tokens = torch.nn.functional.softmax(
@@ -464,8 +466,11 @@ class EncoderTrainer:
                 virtual_embeddings, weighted_token_embeddings, reduction="mean"
             )
 
+            if self.cfg.dinalar_weight > 0:
+                loss += self.cfg.dinalar_weight * dinalar_loss
+
             return (
-                target_prediction_loss + self.cfg.dinalar_weight * dinalar_loss,
+                loss,
                 target_prediction_loss,
                 dinalar_loss,
             )
