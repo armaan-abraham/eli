@@ -31,13 +31,16 @@ def log_metrics(
 ):
     n_iter = len(metrics[list(metrics.keys())[0]])
 
-    for i in range(n_iter):
-        for key, val in metrics.items():
-            wandb.log({key: val[i]})
-
     wandb.log(
         {"loss_control": encoder_trainer.loss_control(data_collector, train_iter)}
     )
+
+    for i in range(n_iter):
+        log_dict = {}
+        for key, val in metrics.items():
+            log_dict[key] = val[i]
+        wandb.log(log_dict)
+
 
 
 def train():

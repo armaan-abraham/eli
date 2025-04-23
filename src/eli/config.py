@@ -29,10 +29,10 @@ class Config:
     decoder_pred_len_toks: int = 2
     encoding_len_toks: int = 2
 
-    train_batch_size_samples: int = 4096
+    train_batch_size_samples: int = 8192
     target_model_batch_size_samples: int = 32768
 
-    buffer_size_samples: int = 32768
+    buffer_size_samples: int = 131072
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128
@@ -63,9 +63,9 @@ class EncoderConfig:
     d_head: int = 16
     d_mlp: int = 256
 
-    lr: float = 1e-4
+    lr: float = 5e-4
     weight_decay: float = 1e-2
-    betas: tuple[float, float] = (0.95, 0.99)
+    betas: tuple[float, float] = (0.9, 0.99)
 
 
 encoder_cfg = EncoderConfig()

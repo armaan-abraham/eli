@@ -342,14 +342,14 @@ def kl_div(
     proposed_logits = proposed_logits.float()
     target_logits = target_logits.float()
 
-    proposed_log_probs = torch.nn.functional.log_softmax(proposed_logits, dim=-1)
-    target_log_probs = torch.nn.functional.log_softmax(target_logits, dim=-1)
+    proposed_probs = torch.nn.functional.softmax(proposed_logits, dim=-1) + 1e-8
+    target_probs = torch.nn.functional.softmax(target_logits, dim=-1) + 1e-8
 
     kl_div = torch.nn.functional.kl_div(
-        proposed_log_probs,
-        target_log_probs,
+        torch.log(proposed_probs),
+        target_probs,
         reduction="sum",
-        log_target=True,
+        log_target=False,
     ) / (proposed_logits.shape[0] * proposed_logits.shape[1])
 
     return kl_div
@@ -373,7 +373,7 @@ class EncoderTrainer:
             self.encoder_decoder = torch.nn.DataParallel(self.encoder_decoder)
 
         self.encoder_decoder.to(self.cfg.device)
-
+        
         self.optimizer = torch.optim.AdamW(
             self.encoder_decoder.parameters(),
             lr=encoder_cfg.lr,
@@ -415,6 +415,11 @@ class EncoderTrainer:
 
         results = {
             "loss": [],
+            "grad_norm": [],
+            "grad_abs_max": [],
+            "grad_abs_min": [],
+            "logits_max": [],
+            "logits_min": [],
         }
 
         # Training loop
@@ -440,9 +445,22 @@ class EncoderTrainer:
 
             torch.nn.utils.clip_grad_norm_(self.encoder_decoder.parameters(), max_norm=0.5)
 
+            grad_stats = get_gradient_stats(self.encoder_decoder.parameters())
+            
+            # Add gradient statistics to results
+            results["grad_norm"].append(grad_stats["grad_norm"])
+            results["grad_abs_max"].append(grad_stats["grad_abs_max"])
+            results["grad_abs_min"].append(grad_stats["grad_abs_min"])
+            results["logits_max"].append(torch.max(batch_logits).item())
+            results["logits_min"].append(torch.min(batch_logits).item())
+
             self.scaler.step(self.optimizer)
             self.scaler.update()
-        
+
+        lens = [len(results[key]) for key in results]
+        assert all(l == lens[0] for l in lens), f"All lengths must be the same, got {lens}"
+
+        print("Length:", lens[0])
 
         return results
 
@@ -496,5 +514,31 @@ class EncoderTrainer:
         if isinstance(self.encoder_decoder, torch.nn.DataParallel):
             return self.encoder_decoder.module.decoder
         return self.encoder_decoder.decoder
+
+def get_gradient_stats(parameters):
+    """
+    Calculate gradient statistics for the given parameters.
+    
+    Args:
+        parameters: Iterator over parameters with gradients
+        
+    Returns:
+        Dictionary containing gradient norm, absolute max, and absolute min
+    """
+    grads = [p.grad.detach() for p in parameters if p.grad is not None]
+    
+    # Flatten gradients
+    flat_grads = torch.cat([g.flatten() for g in grads])
+    
+    # Calculate statistics
+    grad_norm = torch.norm(flat_grads, p=2)
+    grad_abs_max = torch.max(torch.abs(flat_grads))
+    grad_abs_min = torch.min(torch.abs(flat_grads[flat_grads != 0] if torch.any(flat_grads != 0) else flat_grads))
+    
+    return {
+        "grad_norm": grad_norm,
+        "grad_abs_max": grad_abs_max, 
+        "grad_abs_min": grad_abs_min
+    }
 
 
