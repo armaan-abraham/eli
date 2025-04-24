@@ -18,7 +18,7 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(1e6)
+    num_train_samples: int = int(16)
 
     seed: int = 42
 
@@ -33,11 +33,11 @@ class Config:
     decoder_pred_len_toks: int = 2
     encoding_len_toks: int = 2
 
-    train_batch_size_samples: int = 8192 # Split across GPUs
-    control_batch_size_samples: int = 4096
-    target_model_batch_size_samples: int = 16384 # Per GPU
+    train_batch_size_samples: int = 16 # Split across GPUs
+    control_batch_size_samples: int = 16
+    target_model_batch_size_samples: int = 16 # Per GPU
 
-    buffer_size_samples: int = 131072
+    buffer_size_samples: int = 16
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128
@@ -62,10 +62,12 @@ class Config:
 
     @property
     def num_train_iter(self):
-        return self.num_train_samples // self.buffer_size_samples + 1
+        return self.num_train_samples // self.buffer_size_samples
 
 
 cfg = Config()
+
+assert cfg.num_train_samples % cfg.buffer_size_samples == 0
 
 
 @dataclass
