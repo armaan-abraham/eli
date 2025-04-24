@@ -54,3 +54,33 @@ def log_gpu_memory_usage(func: F) -> F:
         return result
 
     return wrapper
+
+
+def print_gpu_memory_usage():
+    """
+    Prints the current GPU memory usage for all available GPUs.
+    Only works if CUDA is available.
+    """
+    if not torch.cuda.is_available():
+        logger.info("CUDA not available, cannot print GPU memory usage")
+        return
+
+    # Get number of GPUs
+    num_gpus = torch.cuda.device_count()
+    
+    logger.info("Current GPU Memory Usage:")
+    
+    # Log memory usage for each GPU
+    for gpu_id in range(num_gpus):
+        # Get current memory usage for this GPU
+        allocated_memory = torch.cuda.memory_allocated(gpu_id)
+        reserved_memory = torch.cuda.memory_reserved(gpu_id)
+        
+        # Convert to more readable format (GB)
+        allocated_memory_gb = allocated_memory / (1024**3)
+        reserved_memory_gb = reserved_memory / (1024**3)
+        
+        logger.info(
+            f"GPU {gpu_id} - Allocated: {allocated_memory_gb:.2f} GB, Reserved: {reserved_memory_gb:.2f} GB"
+        )
+

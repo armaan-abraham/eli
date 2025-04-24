@@ -15,7 +15,7 @@ from datasets.arrow_dataset import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
-from eli.utils import log_gpu_memory_usage
+from eli.utils import log_gpu_memory_usage, print_gpu_memory_usage
 
 this_dir = Path(__file__).parent
 cache_dir = this_dir / "cache"
@@ -201,11 +201,18 @@ class DataCollector:
     def __init__(self, cfg: Config = cfg):
         self.cfg = cfg
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
-        self.token_stream = stream_training_chunks(cfg)
-
-        # Add a queue to hold prefetched tokens
-        self.token_queue = Queue(maxsize=1)
-        self.prefetch_thread = None
+        
+        # Only initialize token stream and prefetch if not using fake tokens
+        if not cfg.use_fake_tokens:
+            self.token_stream = stream_training_chunks(cfg)
+            # Add a queue to hold prefetched tokens
+            self.token_queue = Queue(maxsize=1)
+            self.prefetch_thread = None
+        else:
+            # No token stream or queue when using fake tokens
+            self.token_stream = None
+            self.token_queue = None
+            self.prefetch_thread = None
 
         # Define buffers - using float32 by default for storage
         self.target_generated_tokens = torch.zeros(
@@ -228,18 +235,14 @@ class DataCollector:
             device=CPU,
         )
 
-        # Load models in float32
-        self.target_model = AutoModelForCausalLM.from_pretrained(
-            cfg.target_model_name
-        ).to(CPU)
-        self.target_model_act_collection = (
-            transformer_lens.HookedTransformer.from_pretrained(
-                cfg.target_model_name
-            ).to(CPU)
-        )
+
 
     def prefetch_next_tokens(self):
         """Start a new thread to fetch the next batch of tokens"""
+        # Skip if using fake tokens
+        if self.cfg.use_fake_tokens:
+            return
+            
         if self.prefetch_thread is not None and self.prefetch_thread.is_alive():
             # Wait for any existing prefetch to complete
             self.prefetch_thread.join()
@@ -262,23 +265,49 @@ class DataCollector:
 
     @log_gpu_memory_usage
     def collect_data(self):
-        # Get the prefetched tokens
-        toks_init = self.token_queue.get()
+        # Load models in float32
+        self.target_model = AutoModelForCausalLM.from_pretrained(
+            cfg.target_model_name
+        ).to(CPU)
+        # Comment out the actual model for act collection
+        # self.target_model_act_collection = (
+        #     transformer_lens.HookedTransformer.from_pretrained(
+        #         cfg.target_model_name
+        #     ).to(CPU)
+        # )
 
-        # Start prefetching the next batch
-        self.prefetch_next_tokens()
-
-        assert toks_init is not None, "Ran out of token data"
+        # Get tokens - either from prefetch queue or generate fake ones
+        if self.cfg.use_fake_tokens:
+            # Create fake tokens with the right shape
+            toks_init = torch.randint(
+                0, 
+                self.cfg.vocab_size, 
+                (self.cfg.buffer_size_samples, self.cfg.target_ctx_len_toks),
+                dtype=torch.int32,
+                device=CPU
+            )
+        else:
+            # Get the prefetched tokens
+            toks_init = self.token_queue.get()
+            # Start prefetching the next batch
+            self.prefetch_next_tokens()
+            assert toks_init is not None, "Ran out of token data"
+            
         assert toks_init.shape == (
             self.cfg.buffer_size_samples,
             self.cfg.target_ctx_len_toks,
         )
-
+        
         num_batches = (
             self.cfg.buffer_size_samples // self.cfg.target_model_batch_size_samples
         )
 
-        self.move_models_to_device(self.cfg.device)
+        print("Moving models to device")
+        print_gpu_memory_usage()
+        # Update this to only move target_model
+        self.target_model.to(self.cfg.device)
+        print("Models moved to device")
+        print_gpu_memory_usage()
 
         for i in range(num_batches):
             start_idx = i * self.cfg.target_model_batch_size_samples
@@ -289,16 +318,12 @@ class DataCollector:
 
             # Use autocast for all model operations
             with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
-                # Collect acts of target model
-                _, cache = self.target_model_act_collection.run_with_cache(
-                    batch_toks,
-                    stop_at_layer=self.cfg.layer + 1,
-                    names_filter=self.cfg.act_name,
-                    return_cache_object=True,
+                # Replace act collection with random values
+                batch_size = end_idx - start_idx
+                self.target_acts[start_idx:end_idx] = torch.randn(
+                    (batch_size, self.cfg.target_model_act_dim),
+                    device=CPU
                 )
-                self.target_acts[start_idx:end_idx] = cache.cache_dict[
-                    self.cfg.act_name
-                ][:, -1, :]
 
                 # Generate tokens with target model
                 length_toks = (
@@ -318,15 +343,35 @@ class DataCollector:
                 )
                 self.target_generated_tokens[start_idx:end_idx] = batch_toks_with_gen[
                     :, -self.cfg.target_generation_len_toks :
-                ]
+                ].to(device=CPU)
 
                 # Collect logits of target model
                 with torch.no_grad():
                     self.target_logits[start_idx:end_idx] = self.target_model(
                         batch_toks_with_gen
-                    ).logits[:, -self.cfg.decoder_pred_len_toks :, :]
+                    ).logits[:, -self.cfg.decoder_pred_len_toks :, :].to(device=CPU)
 
-        self.move_models_to_device(CPU)
+        print("Moving models to CPU (data collector)")
+        print_gpu_memory_usage()
+        # Update this to only move target_model back to CPU
+        self.target_model.to(CPU)
+        print("Models moved to CPU (data collector)")
+        print_gpu_memory_usage()
+
+        del batch_toks
+        # Remove cache deletion since we no longer create it
+        # del cache
+        del batch_toks_with_gen
+        del attention_mask
+        print("Deleted variables")
+        print_gpu_memory_usage()
+
+        del self.target_model
+        # Remove deletion of act collection model since we don't create it
+        # del self.target_model_act_collection
+        print("Deleted models")
+        print_gpu_memory_usage()
+
 
     @property
     def data(self):
@@ -338,5 +383,6 @@ class DataCollector:
 
     def finish(self):
         """Clean up resources and join any pending threads"""
-        if self.prefetch_thread and self.prefetch_thread.is_alive():
+        # Only try to join the thread if not using fake tokens
+        if not self.cfg.use_fake_tokens and self.prefetch_thread and self.prefetch_thread.is_alive():
             self.prefetch_thread.join()

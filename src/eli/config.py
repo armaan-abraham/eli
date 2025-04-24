@@ -18,9 +18,15 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(16)
+    num_train_samples: int = int(96)
 
     seed: int = 42
+
+    use_fake_tokens: bool = True
+    
+    # WandB configuration
+    wandb_enabled: bool = False
+    wandb_project: str = "eli"
 
     dataset_name: str = "allenai/c4"
     dataset_column_name: str = "text"
@@ -37,7 +43,7 @@ class Config:
     control_batch_size_samples: int = 16
     target_model_batch_size_samples: int = 16 # Per GPU
 
-    buffer_size_samples: int = 16
+    buffer_size_samples: int = 32
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128

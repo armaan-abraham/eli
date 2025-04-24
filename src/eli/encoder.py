@@ -2,7 +2,7 @@ import torch
 from einops import einsum
 from jaxtyping import Float
 from torch import Tensor
-from torch.amp import GradScaler
+from torch.cuda.amp import GradScaler
 from torch.nn import init
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
