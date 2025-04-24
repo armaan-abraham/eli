@@ -2,13 +2,14 @@ import torch
 from einops import einsum
 from jaxtyping import Float
 from torch import Tensor
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch.nn import init
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import gc
 
 from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
-from eli.utils import log_gpu_memory_usage
+from eli.utils import log_gpu_memory_usage, print_gpu_memory_usage
 
 PROMPT_PREFIX = """<|system|>
 You are an expert at predicting what a language model will say next.
@@ -401,11 +402,22 @@ class EncoderTrainer:
 
         self.encoder_decoder = EncoderDecoder(cfg, encoder_cfg, self.tokenizer)
 
+        self.device_count = 1
         if cfg.device.type == "cuda" and torch.cuda.device_count() > 1:
             print(f"Using {torch.cuda.device_count()} GPUs for encoder decoder")
             self.encoder_decoder = torch.nn.DataParallel(self.encoder_decoder)
+            self.device_count = torch.cuda.device_count()
+
+
+        print("Before moving encoder decoder to device")
+        print_gpu_memory_usage()
 
         self.encoder_decoder.to(self.cfg.device)
+
+        print("After moving encoder decoder to device")
+        gc.collect()
+        torch.cuda.empty_cache()
+        print_gpu_memory_usage()
 
         self.optimizer = torch.optim.AdamW(
             self.encoder_decoder.parameters(),
@@ -415,6 +427,11 @@ class EncoderTrainer:
         )
 
         self.encoder_decoder.to(CPU)
+
+        print("After initializing optimizer and moving encoder decoder to CPU")
+        gc.collect()
+        torch.cuda.empty_cache()
+        print_gpu_memory_usage()
 
         self.scaler = GradScaler()
 
@@ -485,7 +502,7 @@ class EncoderTrainer:
         target_acts = data["target_acts"]
 
         buffer_size = target_acts.shape[0]
-        batch_size = self.cfg.train_batch_size_samples
+        batch_size = self.cfg.train_batch_size_samples * self.device_count
         num_batches = buffer_size // batch_size
 
         results = {
@@ -531,14 +548,20 @@ class EncoderTrainer:
             results["loss"].append(loss.item())
             results["target_prediction_loss"].append(target_prediction_loss.item())
             results["dinalar_loss"].append(dinalar_loss.item())
-            results["grad_norm"].append(grad_stats["grad_norm"])
-            results["grad_abs_max"].append(grad_stats["grad_abs_max"])
-            results["grad_abs_min"].append(grad_stats["grad_abs_min"])
+            results["grad_norm"].append(grad_stats["grad_norm"].item())
+            results["grad_abs_max"].append(grad_stats["grad_abs_max"].item())
+            results["grad_abs_min"].append(grad_stats["grad_abs_min"].item())
             results["logits_max"].append(torch.max(batch_logits).item())
             results["logits_min"].append(torch.min(batch_logits).item())
 
             self.scaler.step(self.optimizer)
             self.scaler.update()
+
+            del batch_tokens, batch_logits, batch_acts, loss, target_prediction_loss, dinalar_loss, grad_stats
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        self.optimizer.zero_grad(set_to_none=True)
 
         lens = [len(results[key]) for key in results]
         assert all(

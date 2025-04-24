@@ -80,17 +80,28 @@ def train():
             print_gpu_memory_usage()
 
             encoder_trainer.move_models_to_device(cfg.device)
-            print("Models moved to device")
+            print("Encoder trainer models moved to device")
             print_gpu_memory_usage()
             metrics = optimize_encoder(data_collector, encoder_trainer, train_iter)
             print("Encoder optimized")
             print_gpu_memory_usage()
 
+            gc.collect()
+            torch.cuda.empty_cache()
+            print("Garbage collected")
+            print_gpu_memory_usage()
+
             log_metrics(metrics, data_collector, encoder_trainer, train_iter)
             print("Metrics logged")
             print_gpu_memory_usage()
+
             encoder_trainer.move_models_to_device(CPU)
-            print("Models moved to CPU")
+            print("Encoder trainer models moved to CPU")
+            print_gpu_memory_usage()
+
+            gc.collect()
+            torch.cuda.empty_cache()
+            print("Garbage collected")
             print_gpu_memory_usage()
 
     finally:

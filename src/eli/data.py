@@ -1,21 +1,23 @@
 import logging
 import os
 import threading
+import traceback
 from pathlib import Path
 from queue import Queue
-from typing import Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 import einops
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 import transformer_lens
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
-from eli.utils import log_gpu_memory_usage, print_gpu_memory_usage
+from eli.utils import print_gpu_memory_usage
 
 this_dir = Path(__file__).parent
 cache_dir = this_dir / "cache"
@@ -197,52 +199,245 @@ def stream_training_chunks(
         yield batch["tokens"].to(dtype=torch.int32, device="cpu")
 
 
+def worker_process(
+    proc_idx: int,
+    device: torch.device,
+    task_queue: mp.Queue,
+    result_queue: mp.Queue,
+    cfg: Config,
+    input_tokens: torch.Tensor,
+    target_acts: torch.Tensor,
+    target_generated_tokens: torch.Tensor,
+    target_logits: torch.Tensor,
+) -> None:
+    """Worker process that loads models and processes batches"""
+    try:
+        # Load models in the worker process (each process gets its own copy)
+        tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+
+        target_model = AutoModelForCausalLM.from_pretrained(cfg.target_model_name).to(
+            CPU
+        )
+        target_model_act_collection = (
+            transformer_lens.HookedTransformer.from_pretrained(
+                cfg.target_model_name
+            ).to(CPU)
+        )
+
+        logging.info(f"Worker {proc_idx} loaded models on {device}")
+
+        while True:
+            # Get chunk range from the queue
+            chunk_range = task_queue.get()
+            if chunk_range is None:  # Sentinel value to stop
+                break
+
+            target_model.to(device)
+            target_model_act_collection.to(device)
+
+            torch.cuda.reset_peak_memory_stats(device)
+
+            chunk_start, chunk_end = chunk_range
+            logging.info(
+                f"Worker {proc_idx} processing chunk {chunk_start}:{chunk_end}"
+            )
+            
+            # Process the chunk in batches
+            batch_size = cfg.target_model_batch_size_samples
+            for batch_start in range(chunk_start, chunk_end, batch_size):
+                batch_end = min(batch_start + batch_size, chunk_end)
+                logging.info(
+                    f"Worker {proc_idx} processing batch {batch_start}:{batch_end}"
+                )
+                
+                # Process the batch
+                batch_toks = input_tokens[batch_start:batch_end].to(device)
+
+                # Use autocast for model operations
+                with torch.autocast(device_type=device.type, dtype=cfg.dtype):
+                    # Collect activations
+                    _, cache = target_model_act_collection.run_with_cache(
+                        batch_toks,
+                        stop_at_layer=cfg.layer + 1,
+                        names_filter=cfg.act_name,
+                        return_cache_object=True,
+                    )
+
+                    # Get activations and move to shared memory
+                    acts = cache.cache_dict[cfg.act_name][:, -1, :]
+                    target_acts[batch_start:batch_end] = acts.cpu()
+
+                    # Generate tokens
+                    length_toks = cfg.target_ctx_len_toks + cfg.target_generation_len_toks
+
+                    # Create attention mask
+                    attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
+
+                    # Generate tokens
+                    batch_toks_with_gen = target_model.generate(
+                        batch_toks,
+                        attention_mask=attention_mask,
+                        max_length=length_toks,
+                        min_length=length_toks,
+                        do_sample=False,
+                        pad_token_id=tokenizer.eos_token_id,
+                    )
+
+                    # Store generated tokens in shared memory
+                    generated_tokens = batch_toks_with_gen[
+                        :, -cfg.target_generation_len_toks :
+                    ]
+                    target_generated_tokens[batch_start:batch_end] = generated_tokens.cpu()
+
+                    # Collect logits
+                    with torch.no_grad():
+                        logits = target_model(batch_toks_with_gen).logits[
+                            :, -cfg.decoder_pred_len_toks :, :
+                        ]
+                        target_logits[batch_start:batch_end] = logits.cpu()
+                    
+                    del batch_toks_with_gen, logits, acts, cache
+
+            peak_mem = torch.cuda.max_memory_allocated(device)
+            logging.info(
+                f"Worker {proc_idx} peak memory: {round(peak_mem / 1024**3, 1)} GB"
+            )
+
+            # Move to CPU before returning so we don't get an OOM error if we do
+            # something on the GPU immediately after
+            target_model.to(CPU)
+            target_model_act_collection.to(CPU)
+
+            # Explicitly clear cached memory on the GPU after processing a chunk
+            # and moving models to CPU.
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
+
+            # Notify completion of the entire chunk
+            result_queue.put(("success", chunk_start, chunk_end))
+
+        logging.info(f"Worker {proc_idx} finished")
+
+        # Clear cache one last time when worker exits normally
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
+
+    except Exception as e:
+        # Send the error back to the main process using the result queue
+        error_str = f"Error in worker {proc_idx}: {str(e)}\n{traceback.format_exc()}"
+        result_queue.put(("error", error_str))
+        logging.error(error_str)
+        # Clear cache on error exit as well
+        if device.type == 'cuda':
+             torch.cuda.empty_cache()
+
+
 class DataCollector:
     def __init__(self, cfg: Config = cfg):
         self.cfg = cfg
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
         
-        # Only initialize token stream and prefetch if not using fake tokens
-        if not cfg.use_fake_tokens:
+        # Only create the token stream if not using fake tokens
+        if not self.cfg.use_fake_tokens:
             self.token_stream = stream_training_chunks(cfg)
             # Add a queue to hold prefetched tokens
             self.token_queue = Queue(maxsize=1)
             self.prefetch_thread = None
         else:
-            # No token stream or queue when using fake tokens
+            logging.info("Using fake tokens for testing")
             self.token_stream = None
             self.token_queue = None
             self.prefetch_thread = None
 
-        # Define buffers - using float32 by default for storage
+        # Setup multiprocessing
+        mp.set_start_method("spawn", force=True)
+
+        # Detect available GPUs
+        self.num_gpus = torch.cuda.device_count()
+        # Use just one process if CPU-only (multiple CPU processes can cause memory issues)
+        self.num_processes = self.num_gpus if self.num_gpus > 0 else 1
+        self.devices = (
+            [torch.device(f"cuda:{i}") for i in range(self.num_gpus)]
+            if self.num_gpus > 0
+            else [torch.device("cpu")]
+        )
+
+        logging.info(f"Using {self.num_processes} processes on devices: {self.devices}")
+
+        # Create shared memory tensors
+        self.setup_shared_tensors()
+
+        # Initialize multiprocessing components
+        self.task_queue = mp.Queue()
+        self.result_queue = mp.Queue()
+        self.processes = []
+
+        # Start prefetching tokens
+        self.prefetch_next_tokens()
+
+        self.start_worker_processes()
+
+    def setup_shared_tensors(self):
+        """Create shared memory tensors for input and output data"""
+        # Define shared memory tensors with proper dtype for storage
         self.target_generated_tokens = torch.zeros(
             (self.cfg.buffer_size_samples, self.cfg.target_generation_len_toks),
             dtype=torch.int32,
             device=CPU,
-        )
+        ).share_memory_()
+
         self.target_logits = torch.zeros(
             (
                 self.cfg.buffer_size_samples,
                 self.cfg.decoder_pred_len_toks,
                 self.cfg.vocab_size,
             ),
-            dtype=torch.float32,  # Store in float32
+            dtype=torch.float32,
             device=CPU,
-        )
+        ).share_memory_()
+
         self.target_acts = torch.zeros(
             (self.cfg.buffer_size_samples, self.cfg.target_model_act_dim),
-            dtype=torch.float32,  # Store in float32
+            dtype=torch.float32,
             device=CPU,
-        )
+        ).share_memory_()
 
+        # Shared input tokens tensor that will be populated with data
+        self.input_tokens = torch.zeros(
+            (self.cfg.buffer_size_samples, self.cfg.target_ctx_len_toks),
+            dtype=torch.int32,
+            device=CPU,
+        ).share_memory_()
 
+    def start_worker_processes(self):
+        """Start worker processes, one per GPU"""
+        for proc_idx in range(self.num_processes):
+            device = self.devices[proc_idx]
+            p = mp.Process(
+                target=worker_process,
+                args=(
+                    proc_idx,
+                    device,
+                    self.task_queue,
+                    self.result_queue,
+                    self.cfg,
+                    self.input_tokens,
+                    self.target_acts,
+                    self.target_generated_tokens,
+                    self.target_logits,
+                ),
+                daemon=True,
+            )
+            p.start()
+            self.processes.append(p)
+            logging.info(f"Started worker process {proc_idx} on device {device}")
 
     def prefetch_next_tokens(self):
         """Start a new thread to fetch the next batch of tokens"""
-        # Skip if using fake tokens
+        # Skip prefetching if using fake tokens
         if self.cfg.use_fake_tokens:
             return
-            
+        
         if self.prefetch_thread is not None and self.prefetch_thread.is_alive():
             # Wait for any existing prefetch to complete
             self.prefetch_thread.join()
@@ -256,32 +451,17 @@ class DataCollector:
                 self.token_queue.put(None)
 
         self.prefetch_thread = threading.Thread(target=fetch_worker)
-        self.prefetch_thread.daemon = True  # Thread will exit when main program exits
+        self.prefetch_thread.daemon = True
         self.prefetch_thread.start()
 
-    def move_models_to_device(self, device: torch.device):
-        self.target_model.to(device)
-        self.target_model_act_collection.to(device)
-
-    @log_gpu_memory_usage
     def collect_data(self):
-        # Load models in float32
-        self.target_model = AutoModelForCausalLM.from_pretrained(
-            cfg.target_model_name
-        ).to(CPU)
-        # Comment out the actual model for act collection
-        # self.target_model_act_collection = (
-        #     transformer_lens.HookedTransformer.from_pretrained(
-        #         cfg.target_model_name
-        #     ).to(CPU)
-        # )
-
-        # Get tokens - either from prefetch queue or generate fake ones
+        """Coordinate the data collection across multiple GPUs"""
+        # Generate random tokens if using fake tokens, otherwise get prefetched tokens
         if self.cfg.use_fake_tokens:
-            # Create fake tokens with the right shape
+            # Generate random tokens between 0 and vocab_size-1
             toks_init = torch.randint(
                 0, 
-                self.cfg.vocab_size, 
+                self.cfg.vocab_size - 1, 
                 (self.cfg.buffer_size_samples, self.cfg.target_ctx_len_toks),
                 dtype=torch.int32,
                 device=CPU
@@ -292,97 +472,81 @@ class DataCollector:
             # Start prefetching the next batch
             self.prefetch_next_tokens()
             assert toks_init is not None, "Ran out of token data"
-            
+
         assert toks_init.shape == (
             self.cfg.buffer_size_samples,
             self.cfg.target_ctx_len_toks,
         )
+
+        # Copy tokens to shared memory
+        self.input_tokens.copy_(toks_init)
+
+        # Divide data equally across devices
+        samples_per_device = self.cfg.buffer_size_samples // self.num_processes
+
+        print("Starting to distribute work to processes")
+        print_gpu_memory_usage()
         
-        num_batches = (
-            self.cfg.buffer_size_samples // self.cfg.target_model_batch_size_samples
-        )
+        # Distribute work to processes
+        submitted_tasks = 0
+        for i in range(self.num_processes):
+            chunk_start = i * samples_per_device
+            # Make sure the last chunk gets any remaining samples
+            chunk_end = chunk_start + samples_per_device
+            if i == self.num_processes - 1:
+                chunk_end = self.cfg.buffer_size_samples
+            
+            self.task_queue.put((chunk_start, chunk_end))
+            submitted_tasks += 1
+            logging.info(f"Assigned chunk {chunk_start}:{chunk_end} to worker {i}")
 
-        print("Moving models to device")
-        print_gpu_memory_usage()
-        # Update this to only move target_model
-        self.target_model.to(self.cfg.device)
-        print("Models moved to device")
-        print_gpu_memory_usage()
-
-        for i in range(num_batches):
-            start_idx = i * self.cfg.target_model_batch_size_samples
-            end_idx = start_idx + self.cfg.target_model_batch_size_samples
-
-            # Get current batch
-            batch_toks = toks_init[start_idx:end_idx].to(self.cfg.device)
-
-            # Use autocast for all model operations
-            with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
-                # Replace act collection with random values
-                batch_size = end_idx - start_idx
-                self.target_acts[start_idx:end_idx] = torch.randn(
-                    (batch_size, self.cfg.target_model_act_dim),
-                    device=CPU
-                )
-
-                # Generate tokens with target model
-                length_toks = (
-                    self.cfg.target_ctx_len_toks + self.cfg.target_generation_len_toks
-                )
-
-                # Create an attention mask of all 1s (all tokens are valid content)
-                attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
-
-                batch_toks_with_gen = self.target_model.generate(
-                    batch_toks,
-                    attention_mask=attention_mask,
-                    max_length=length_toks,
-                    min_length=length_toks,
-                    do_sample=False,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                )
-                self.target_generated_tokens[start_idx:end_idx] = batch_toks_with_gen[
-                    :, -self.cfg.target_generation_len_toks :
-                ].to(device=CPU)
-
-                # Collect logits of target model
-                with torch.no_grad():
-                    self.target_logits[start_idx:end_idx] = self.target_model(
-                        batch_toks_with_gen
-                    ).logits[:, -self.cfg.decoder_pred_len_toks :, :].to(device=CPU)
-
-        print("Moving models to CPU (data collector)")
-        print_gpu_memory_usage()
-        # Update this to only move target_model back to CPU
-        self.target_model.to(CPU)
-        print("Models moved to CPU (data collector)")
+        # Wait for all tasks to complete and check for errors
+        completed_tasks = 0
+        while completed_tasks < submitted_tasks:
+            # Get result (may be success or error)
+            result = self.result_queue.get()
+            
+            # Check if it's an error or success
+            if result[0] == "error":
+                # It's an error
+                error_str = result[1]
+                raise RuntimeError(f"Error in worker process: {error_str}")
+            
+            # It's a success
+            _, chunk_start, chunk_end = result
+            logging.info(f"Completed chunk {chunk_start}:{chunk_end}")
+            completed_tasks += 1
+        
+        print("All chunks processed successfully")
         print_gpu_memory_usage()
 
-        del batch_toks
-        # Remove cache deletion since we no longer create it
-        # del cache
-        del batch_toks_with_gen
-        del attention_mask
-        print("Deleted variables")
-        print_gpu_memory_usage()
-
-        del self.target_model
-        # Remove deletion of act collection model since we don't create it
-        # del self.target_model_act_collection
-        print("Deleted models")
-        print_gpu_memory_usage()
-
+        logging.info(f"All {completed_tasks} chunks processed successfully")
 
     @property
     def data(self):
+        """Return the collected data"""
         return {
             "target_generated_tokens": self.target_generated_tokens,
             "target_logits": self.target_logits,
             "target_acts": self.target_acts,
         }
+    
+    def terminate_worker_processes(self):
+        """Terminate worker processes"""
+        for _ in range(len(self.processes)):
+            self.task_queue.put(None)
+        
+        for p in self.processes:
+            p.join(timeout=10)
+            if p.is_alive():
+                p.terminate()
 
     def finish(self):
-        """Clean up resources and join any pending threads"""
-        # Only try to join the thread if not using fake tokens
+        """Clean up resources and terminate worker processes"""
+        self.terminate_worker_processes()
+
+        # Wait for prefetch thread if it exists
         if not self.cfg.use_fake_tokens and self.prefetch_thread and self.prefetch_thread.is_alive():
-            self.prefetch_thread.join()
+            self.prefetch_thread.join(timeout=5)
+
+        logging.info("All resources cleaned up")
