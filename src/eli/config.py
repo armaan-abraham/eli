@@ -22,7 +22,7 @@ class Config:
 
     seed: int = 42
 
-    use_fake_tokens: bool = False
+    use_fake_tokens: bool = True
     
     # WandB configuration
     wandb_enabled: bool = True
@@ -39,11 +39,11 @@ class Config:
     decoder_pred_len_toks: int = 2
     encoding_len_toks: int = 2
 
-    train_batch_size_samples: int = 4096 # Split across GPUs
-    control_batch_size_samples: int = 2048
-    target_model_batch_size_samples: int = 4096 # Per GPU
+    train_batch_size_samples: int = 4096 # Per GPU
+    control_batch_size_samples: int = 4096 # Per GPU
+    target_model_batch_size_samples: int = 8192 # Per GPU
 
-    buffer_size_samples: int = 65536
+    buffer_size_samples: int = 131072
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128
