@@ -37,8 +37,14 @@ def log_metrics(
 
     n_iter = len(metrics[list(metrics.keys())[0]])
 
+    loss = metrics["loss"][0]
+    loss_control = encoder_trainer.loss_control(data_collector, train_iter)
+
     wandb.log(
-        {"loss_control": encoder_trainer.loss_control(data_collector, train_iter)}
+        {
+            "loss_control": loss_control,
+            "loss_normal": loss / loss_control,
+        }
     )
 
     for i in range(n_iter):
