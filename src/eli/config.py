@@ -18,7 +18,7 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(5e6)
+    num_train_samples: int = int(2e7)
 
     seed: int = 42
 
@@ -54,9 +54,9 @@ class Config:
     site: str = "resid_pre"
     layer: int = 4
 
-    dinalar_weight: float = 0
+    dinalar_weight: float = 1e-3
 
-    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
+    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder-dinalar.pt"
 
     @property
     def target_generation_len_toks(self):

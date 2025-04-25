@@ -522,8 +522,8 @@ def kl_div(
     target_logits = target_logits.float()
 
     # Add small epsilon to prevent numerical issues
-    proposed_probs = torch.nn.functional.softmax(proposed_logits, dim=-1) + 1e-9
-    target_probs = torch.nn.functional.softmax(target_logits, dim=-1) + 1e-9
+    proposed_probs = torch.nn.functional.softmax(proposed_logits, dim=-1) + 1e-8
+    target_probs = torch.nn.functional.softmax(target_logits, dim=-1) + 1e-8
 
     # Calculate KL divergence
     kl = torch.nn.functional.kl_div(
