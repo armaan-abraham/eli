@@ -450,7 +450,7 @@ class DataCollector:
             self.cfg.buffer_size_samples * self.cfg.target_generation_len_toks * 4  # int32 = 4 bytes
         )
         target_logits_size = (
-            self.cfg.buffer_size_samples * self.cfg.decoder_pred_len_toks * self.cfg.vocab_size * 2  # float16 = 2 bytes
+            self.cfg.buffer_size_samples * self.cfg.decoder_pred_len_toks * self.cfg.vocab_size * 4  # float32 = 4 bytes
         )
         target_acts_size = (
             self.cfg.buffer_size_samples * self.cfg.target_model_act_dim * 4  # float32 = 4 bytes
@@ -484,7 +484,7 @@ class DataCollector:
                 self.cfg.decoder_pred_len_toks,
                 self.cfg.vocab_size,
             ),
-            dtype=torch.float16,
+            dtype=torch.float32,
             device=CPU,
         ).share_memory_()
 

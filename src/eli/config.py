@@ -84,7 +84,7 @@ class EncoderConfig:
     d_head: int = 32
     d_mlp: int = 512
 
-    lr: float = 1e-3
+    lr: float = 5e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.99)
 
