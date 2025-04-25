@@ -18,11 +18,11 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(5e8)
+    num_train_samples: int = int(5e6)
 
     seed: int = 42
 
-    use_fake_tokens: bool = True
+    use_fake_tokens: bool = False
 
     # WandB configuration
     wandb_enabled: bool = True
@@ -36,14 +36,14 @@ class Config:
     decoder_model_name: str = "EleutherAI/pythia-14m"
     vocab_size: int = 50304
     target_ctx_len_toks: int = 64
-    decoder_pred_len_toks: int = 32
-    encoding_len_toks: int = 8
+    decoder_pred_len_toks: int = 16
+    encoding_len_toks: int = 4
 
-    train_batch_size_samples: int = 256  # Per GPU
-    control_batch_size_samples: int = 256  # Per GPU
-    target_model_batch_size_samples: int = 8192  # Per GPU
+    train_batch_size_samples: int = 512  # Per GPU
+    control_batch_size_samples: int = 512  # Per GPU
+    target_model_batch_size_samples: int = 4096  # Per GPU
 
-    buffer_size_samples: int = 8192
+    buffer_size_samples: int = 16384
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128
