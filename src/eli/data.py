@@ -17,7 +17,6 @@ from datasets.arrow_dataset import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
-from eli.utils import print_gpu_memory_usage_fn
 
 # Setup directories
 this_dir = Path(__file__).parent
@@ -312,7 +311,11 @@ def worker_process(
             # Move models to device for processing
             target_model.to(device)
             target_model_act_collection.to(device)
-
+            
+            # Reset memory stats before starting new task
+            if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats(device)
+            
             chunk_start, chunk_end = chunk_range
             logging.info(
                 f"Worker {proc_idx} processing chunk {chunk_start}:{chunk_end}"
@@ -341,6 +344,14 @@ def worker_process(
                     cfg,
                     device,
                 )
+
+            # Get final memory stats for the whole chunk
+            if device.type == "cuda":
+                max_allocated = torch.cuda.max_memory_allocated(device) / (1024 ** 3)  # GB
+                max_reserved = torch.cuda.max_memory_reserved(device) / (1024 ** 3)    # GB
+                logging.info(f"Worker {proc_idx}, CHUNK {chunk_start}:{chunk_end} COMPLETED, "
+                             f"Max GPU memory allocated: {max_allocated:.2f} GB, "
+                             f"Max GPU memory reserved: {max_reserved:.2f} GB")
 
             # Move models back to CPU and clear GPU memory
             target_model.to(CPU)
@@ -434,6 +445,32 @@ class DataCollector:
 
     def setup_shared_tensors(self):
         """Create shared memory tensors for input and output data"""
+        # Calculate and log memory sizes before initialization
+        target_generated_tokens_size = (
+            self.cfg.buffer_size_samples * self.cfg.target_generation_len_toks * 4  # int32 = 4 bytes
+        )
+        target_logits_size = (
+            self.cfg.buffer_size_samples * self.cfg.decoder_pred_len_toks * self.cfg.vocab_size * 2  # float16 = 2 bytes
+        )
+        target_acts_size = (
+            self.cfg.buffer_size_samples * self.cfg.target_model_act_dim * 4  # float32 = 4 bytes
+        )
+        input_tokens_size = (
+            self.cfg.buffer_size_samples * self.cfg.target_ctx_len_toks * 4  # int32 = 4 bytes
+        )
+        
+        # Log sizes in more readable format (bytes, KB, MB, GB)
+        logging.info(f"target_generated_tokens size: {target_generated_tokens_size} bytes "
+                     f"({target_generated_tokens_size/1024/1024:.2f} MB)")
+        logging.info(f"target_logits size: {target_logits_size} bytes "
+                     f"({target_logits_size/1024/1024:.2f} MB)")
+        logging.info(f"target_acts size: {target_acts_size} bytes "
+                     f"({target_acts_size/1024/1024:.2f} MB)")
+        logging.info(f"input_tokens size: {input_tokens_size} bytes "
+                     f"({input_tokens_size/1024/1024:.2f} MB)")
+        logging.info(f"Total shared memory size: "
+                     f"{(target_generated_tokens_size + target_logits_size + target_acts_size + input_tokens_size)/1024/1024/1024:.2f} GB")
+        
         # Define shared memory tensors with proper dtype for storage
         self.target_generated_tokens = torch.zeros(
             (self.cfg.buffer_size_samples, self.cfg.target_generation_len_toks),
@@ -447,7 +484,7 @@ class DataCollector:
                 self.cfg.decoder_pred_len_toks,
                 self.cfg.vocab_size,
             ),
-            dtype=torch.float32,
+            dtype=torch.float16,
             device=CPU,
         ).share_memory_()
 
@@ -542,7 +579,6 @@ class DataCollector:
 
         return toks_init
 
-    @print_gpu_memory_usage_fn
     def collect_data(self):
         """Coordinate data collection across multiple GPUs"""
         # Load tokens into shared memory

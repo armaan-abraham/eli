@@ -694,7 +694,7 @@ class EncoderTrainer:
             batch_tokens = target_generated_tokens[start_idx:end_idx].to(
                 self.cfg.device
             )
-            batch_logits = target_logits[start_idx:end_idx].to(self.cfg.device)
+            batch_logits = target_logits[start_idx:end_idx].to(self.cfg.device, dtype=torch.float32)
             batch_acts = target_acts[start_idx:end_idx].to(self.cfg.device)
 
             # Zero gradients
@@ -776,7 +776,7 @@ class EncoderTrainer:
             self.cfg.device
         )
         logits = target_logits[: self.cfg.control_batch_size_samples].to(
-            self.cfg.device
+            self.cfg.device, dtype=torch.float32
         )
 
         with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
