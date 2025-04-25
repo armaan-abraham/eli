@@ -19,19 +19,26 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from eli.config import CPU, Config, cfg
 from eli.utils import print_gpu_memory_usage_fn
 
+# Setup directories
 this_dir = Path(__file__).parent
 cache_dir = this_dir / "cache"
+cache_dir.mkdir(parents=True, exist_ok=True)
 
-for dir_path in [cache_dir]:
-    dir_path.mkdir(parents=True, exist_ok=True)
-
+# Set environment variables
 os.environ["TRANSFORMERS_CACHE"] = str(cache_dir)
 os.environ["DATASETS_CACHE"] = str(cache_dir)
 
 
-def keep_single_column(dataset: Dataset, col_name: str):
+def keep_single_column(dataset: Dataset, col_name: str) -> Dataset:
     """
-    Acts on a HuggingFace dataset to delete all columns apart from a single column name - useful when we want to tokenize and mix together different strings
+    Acts on a HuggingFace dataset to delete all columns apart from a single column name.
+
+    Args:
+        dataset: HuggingFace dataset to modify
+        col_name: Name of the column to keep
+
+    Returns:
+        Dataset with only the specified column
     """
     for key in dataset.features:
         if key != col_name:
@@ -39,7 +46,6 @@ def keep_single_column(dataset: Dataset, col_name: str):
     return dataset
 
 
-# This is a modified version of the tokenize_and_concatenate function from transformer_lens.utils
 def tokenize_and_concatenate(
     dataset: Dataset,
     tokenizer: AutoTokenizer,
@@ -49,31 +55,32 @@ def tokenize_and_concatenate(
     add_bos_token: bool = True,
     num_proc: int = 10,
 ) -> Dataset:
-    """Helper function to tokenize and concatenate a dataset of text. This converts the text to tokens, concatenates them (separated by EOS tokens) and then reshapes them into a 2D array of shape (____, sequence_length), dropping the last batch. Tokenizers are much faster if parallelised, so we chop the string into 20, feed it into the tokenizer, in parallel with padding, then remove padding at the end.
+    """
+    Tokenize and concatenate a dataset of text.
 
-    This tokenization is useful for training language models, as it allows us to efficiently train on a large corpus of text of varying lengths (without, eg, a lot of truncation or padding). Further, for models with absolute positional encodings, this avoids privileging early tokens (eg, news articles often begin with CNN, and models may learn to use early positional encodings to predict these)
+    This converts text to tokens, concatenates them (separated by EOS tokens) and reshapes
+    them into a 2D array, dropping the last incomplete batch.
 
     Args:
-        dataset (Dataset): The dataset to tokenize, assumed to be a HuggingFace text dataset.
-        tokenizer (AutoTokenizer): The tokenizer. Assumed to have a bos_token_id and an eos_token_id.
-        streaming (bool, optional): Whether the dataset is being streamed. If True, avoids using parallelism. Defaults to False.
-        max_length (int, optional): The length of the context window of the sequence. Defaults to 1024.
-        column_name (str, optional): The name of the text column in the dataset. Defaults to 'text'.
-        add_bos_token (bool, optional): . Defaults to True.
+        dataset: The dataset to tokenize (HuggingFace text dataset)
+        tokenizer: The tokenizer with bos_token_id and eos_token_id
+        streaming: Whether the dataset is being streamed
+        max_length: Context window length
+        column_name: Name of the text column in the dataset
+        add_bos_token: Whether to add beginning of sequence token
+        num_proc: Number of processes for parallel processing
 
     Returns:
-        Dataset: Returns the tokenized dataset, as a dataset of tensors, with a single column called "tokens"
+        Tokenized dataset with a single column "tokens"
     """
     if tokenizer.pad_token is None:
-        # We add a padding token, purely to implement the tokenizer. This will be removed before inputting tokens to the model, so we do not need to increment d_vocab in the model.
+        # Add padding token for tokenization (will be removed before using tokens in model)
         tokenizer.add_special_tokens({"pad_token": "<PAD>"})
-    # Define the length to chop things up into - leaving space for a bos_token if required
-    if add_bos_token:
-        seq_len = max_length - 1
-    else:
-        seq_len = max_length
 
-    logging.info(f"Tokenize and concatenate called")
+    # Define sequence length accounting for BOS token if needed
+    seq_len = max_length - 1 if add_bos_token else max_length
+
+    logging.info("Tokenize and concatenate called")
 
     def tokenize_function(examples: Dict[str, List[str]]) -> Dict[str, np.ndarray]:
         text = examples[column_name]
@@ -82,66 +89,55 @@ def tokenize_and_concatenate(
         assert isinstance(
             text[0][0], str
         ), f"Expected list of lists of strings, got {type(text[0][0])}"
-        # Concatenate it all into an enormous string, separated by eos_tokens
-        # This double loop looks incorrect, but we are actually getting a list
-        # of lists of strings from text, so this is required and correct
+
+        # Concatenate text with EOS tokens between entries
         full_text = tokenizer.eos_token.join(
             [tokenizer.eos_token.join(sub_text) for sub_text in text]
         )
         logging.info(f"Full text length: {len(full_text)}")
 
-        # Handle the case when full_text is empty
+        # Handle empty text case
         if not full_text.strip():
             return {"tokens": np.array([], dtype=np.int64)}
 
-        # Divide into 20 chunks of ~ equal length
+        # Divide into chunks for parallel tokenization
         num_chunks = 20
         chunk_length = (len(full_text) - 1) // num_chunks + 1
         chunks = [
             full_text[i * chunk_length : (i + 1) * chunk_length]
             for i in range(num_chunks)
         ]
-        # Tokenize the chunks in parallel. Uses NumPy because HuggingFace map doesn't want tensors returned
+
+        # Tokenize chunks in parallel
         tokens = tokenizer(chunks, return_tensors="np", padding=True)[
             "input_ids"
         ].flatten()
-        # Drop padding tokens
         tokens = tokens[tokens != tokenizer.pad_token_id]
         num_tokens = len(tokens)
+
         assert (
             num_tokens > seq_len
         ), f"Num tokens: {num_tokens} is less than seq_len: {seq_len}"
         logging.info(f"Num tokens: {num_tokens}")
 
-        # Handle cases where num_tokens is less than seq_len
-        # if num_tokens < seq_len:
-        #     num_batches = 1
-        #     # Pad tokens if necessary
-        #     tokens = tokens[:seq_len]
-        #     if len(tokens) < seq_len:
-        #         padding_length = seq_len - len(tokens)
-        #         padding = np.full(padding_length, tokenizer.pad_token_id)
-        #         tokens = np.concatenate([tokens, padding], axis=0)
-        # else:
-
+        # Create batches of tokens of length seq_len
         num_batches = num_tokens // seq_len
-
-        # Drop the final tokens if not enough to make a full sequence
         tokens = tokens[: seq_len * num_batches]
-
         tokens = einops.rearrange(
             tokens, "(batch seq) -> batch seq", batch=num_batches, seq=seq_len
         )
 
-        # Drop sequences that end with an EOS token because we are using these
-        # for generation.
+        # Drop sequences that end with an EOS token (for generation)
         tokens = tokens[tokens[:, -1] != tokenizer.eos_token_id]
 
+        # Add BOS token if required
         if add_bos_token:
-            prefix = np.full((num_batches, 1), tokenizer.bos_token_id)
+            prefix = np.full((len(tokens), 1), tokenizer.bos_token_id)
             tokens = np.concatenate([prefix, tokens], axis=1)
+
         return {"tokens": tokens}
 
+    # Set up mapping parameters
     kwargs = {
         "batched": True,
         "remove_columns": [column_name],
@@ -149,22 +145,29 @@ def tokenize_and_concatenate(
     if not streaming:
         kwargs["num_proc"] = num_proc
 
-    tokenized_dataset = dataset.map(
-        tokenize_function,
-        **kwargs,
-    )
+    # Apply tokenization
+    tokenized_dataset = dataset.map(tokenize_function, **kwargs)
     return tokenized_dataset.with_format(type="torch")
 
 
-def stream_training_chunks(
-    cfg: Config = cfg,
-):
+def stream_training_chunks(cfg: Config = cfg):
+    """
+    Stream tokenized chunks from a dataset for training.
+
+    Args:
+        cfg: Configuration object
+
+    Yields:
+        Batches of tokenized text as tensors
+    """
     CLIENT_TIMEOUT_SECONDS = 60 * 60 * 2
     storage_options = {
         "client_kwargs": {
             "timeout": aiohttp.ClientTimeout(total=CLIENT_TIMEOUT_SECONDS),
         }
     }
+
+    # Load and prepare dataset
     dataset_iter = load_dataset(
         cfg.dataset_name,
         "en",
@@ -177,13 +180,12 @@ def stream_training_chunks(
 
     dataset_iter = keep_single_column(dataset_iter, cfg.dataset_column_name)
     dataset_iter = dataset_iter.batch(cfg.dataset_batch_size_entries)
-
     dataset_iter = dataset_iter.shuffle(
         seed=cfg.seed, buffer_size=cfg.dataset_batch_size_entries
     )
 
+    # Tokenize the dataset
     tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
-
     dataset_iter = tokenize_and_concatenate(
         dataset_iter,
         tokenizer,
@@ -199,6 +201,72 @@ def stream_training_chunks(
         yield batch["tokens"].to(dtype=torch.int32, device="cpu")
 
 
+def _process_batch(
+    batch_toks: torch.Tensor,
+    batch_start: int,
+    batch_end: int,
+    target_model: AutoModelForCausalLM,
+    target_model_act_collection: transformer_lens.HookedTransformer,
+    tokenizer: AutoTokenizer,
+    target_acts: torch.Tensor,
+    target_generated_tokens: torch.Tensor,
+    target_logits: torch.Tensor,
+    cfg: Config,
+    device: torch.device,
+) -> None:
+    """
+    Process a single batch of tokens through the models.
+
+    Args:
+        batch_toks: Input tokens tensor
+        batch_start, batch_end: Start and end indices of this batch
+        target_model: Model for token generation
+        target_model_act_collection: Model for activation collection
+        tokenizer: Tokenizer for the models
+        target_acts, target_generated_tokens, target_logits: Output tensors
+        cfg: Configuration object
+        device: Device to run computation on
+    """
+    # Use autocast for model operations
+    with torch.autocast(device_type=device.type, dtype=cfg.dtype):
+        # Collect activations
+        _, cache = target_model_act_collection.run_with_cache(
+            batch_toks,
+            stop_at_layer=cfg.layer + 1,
+            names_filter=cfg.act_name,
+            return_cache_object=True,
+        )
+
+        # Get activations and move to shared memory
+        acts = cache.cache_dict[cfg.act_name][:, -1, :]
+        target_acts[batch_start:batch_end] = acts.cpu()
+
+        # Generate tokens
+        length_toks = cfg.target_ctx_len_toks + cfg.target_generation_len_toks
+        attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
+
+        # Generate tokens
+        batch_toks_with_gen = target_model.generate(
+            batch_toks,
+            attention_mask=attention_mask,
+            max_length=length_toks,
+            min_length=length_toks,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+        # Store generated tokens in shared memory
+        generated_tokens = batch_toks_with_gen[:, -cfg.target_generation_len_toks :]
+        target_generated_tokens[batch_start:batch_end] = generated_tokens.cpu()
+
+        # Collect logits
+        with torch.no_grad():
+            logits = target_model(batch_toks_with_gen).logits[
+                :, -cfg.decoder_pred_len_toks :, :
+            ]
+            target_logits[batch_start:batch_end] = logits.cpu()
+
+
 def worker_process(
     proc_idx: int,
     device: torch.device,
@@ -210,11 +278,20 @@ def worker_process(
     target_generated_tokens: torch.Tensor,
     target_logits: torch.Tensor,
 ) -> None:
-    """Worker process that loads models and processes batches"""
-    try:
-        # Load models in the worker process (each process gets its own copy)
-        tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+    """
+    Worker process that loads models and processes batches.
 
+    Args:
+        proc_idx: Process index
+        device: Device to run computation on
+        task_queue: Queue to get tasks from
+        result_queue: Queue to report results
+        cfg: Configuration object
+        input_tokens, target_acts, target_generated_tokens, target_logits: Shared tensors
+    """
+    try:
+        # Load models in the worker process
+        tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
         target_model = AutoModelForCausalLM.from_pretrained(cfg.target_model_name).to(
             CPU
         )
@@ -232,10 +309,9 @@ def worker_process(
             if chunk_range is None:  # Sentinel value to stop
                 break
 
+            # Move models to device for processing
             target_model.to(device)
             target_model_act_collection.to(device)
-
-            torch.cuda.reset_peak_memory_stats(device)
 
             chunk_start, chunk_end = chunk_range
             logging.info(
@@ -250,101 +326,84 @@ def worker_process(
                     f"Worker {proc_idx} processing batch {batch_start}:{batch_end}"
                 )
 
-                # Process the batch
+                # Get batch tokens and process
                 batch_toks = input_tokens[batch_start:batch_end].to(device)
+                _process_batch(
+                    batch_toks,
+                    batch_start,
+                    batch_end,
+                    target_model,
+                    target_model_act_collection,
+                    tokenizer,
+                    target_acts,
+                    target_generated_tokens,
+                    target_logits,
+                    cfg,
+                    device,
+                )
 
-                # Use autocast for model operations
-                with torch.autocast(device_type=device.type, dtype=cfg.dtype):
-                    # Collect activations
-                    _, cache = target_model_act_collection.run_with_cache(
-                        batch_toks,
-                        stop_at_layer=cfg.layer + 1,
-                        names_filter=cfg.act_name,
-                        return_cache_object=True,
-                    )
-
-                    # Get activations and move to shared memory
-                    acts = cache.cache_dict[cfg.act_name][:, -1, :]
-                    target_acts[batch_start:batch_end] = acts.cpu()
-
-                    # Generate tokens
-                    length_toks = (
-                        cfg.target_ctx_len_toks + cfg.target_generation_len_toks
-                    )
-
-                    # Create attention mask
-                    attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
-
-                    # Generate tokens
-                    batch_toks_with_gen = target_model.generate(
-                        batch_toks,
-                        attention_mask=attention_mask,
-                        max_length=length_toks,
-                        min_length=length_toks,
-                        do_sample=False,
-                        pad_token_id=tokenizer.eos_token_id,
-                    )
-
-                    # Store generated tokens in shared memory
-                    generated_tokens = batch_toks_with_gen[
-                        :, -cfg.target_generation_len_toks :
-                    ]
-                    target_generated_tokens[batch_start:batch_end] = (
-                        generated_tokens.cpu()
-                    )
-
-                    # Collect logits
-                    with torch.no_grad():
-                        logits = target_model(batch_toks_with_gen).logits[
-                            :, -cfg.decoder_pred_len_toks :, :
-                        ]
-                        target_logits[batch_start:batch_end] = logits.cpu()
-
-                    del batch_toks_with_gen, logits, acts, cache
-
-            peak_mem = torch.cuda.max_memory_allocated(device)
-            logging.info(
-                f"Worker {proc_idx} peak memory: {round(peak_mem / 1024**3, 1)} GB"
-            )
-
-            # Move to CPU before returning so we don't get an OOM error if we do
-            # something on the GPU immediately after
+            # Move models back to CPU and clear GPU memory
             target_model.to(CPU)
             target_model_act_collection.to(CPU)
-
-            # Explicitly clear cached memory on the GPU after processing a chunk
-            # and moving models to CPU.
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
-            # Notify completion of the entire chunk
+            # Notify completion of the chunk
             result_queue.put(("success", chunk_start, chunk_end))
 
         logging.info(f"Worker {proc_idx} finished")
 
-        # Clear cache one last time when worker exits normally
+        # Final cleanup
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
     except Exception as e:
-        # Send the error back to the main process using the result queue
+        # Send error back to main process
         error_str = f"Error in worker {proc_idx}: {str(e)}\n{traceback.format_exc()}"
         result_queue.put(("error", error_str))
         logging.error(error_str)
-        # Clear cache on error exit as well
+
+        # Clear cache on error
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
 
 class DataCollector:
+    """
+    Manages the process of collecting data from models across multiple devices.
+
+    Handles token streaming, worker processes, and data aggregation.
+    """
+
     def __init__(self, cfg: Config = cfg):
+        """
+        Initialize the data collector.
+
+        Args:
+            cfg: Configuration object
+        """
         self.cfg = cfg
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
 
-        # Only create the token stream if not using fake tokens
+        # Setup token streaming
+        self._setup_token_streaming()
+
+        # Setup multiprocessing
+        self._setup_multiprocessing()
+
+        # Create shared memory tensors
+        self.setup_shared_tensors()
+
+        # Start prefetching tokens
+        self.prefetch_next_tokens()
+
+        # Start worker processes
+        self.start_worker_processes()
+
+    def _setup_token_streaming(self):
+        """Configure token streaming based on configuration"""
         if not self.cfg.use_fake_tokens:
-            self.token_stream = stream_training_chunks(cfg)
-            # Add a queue to hold prefetched tokens
+            self.token_stream = stream_training_chunks(self.cfg)
             self.token_queue = Queue(maxsize=1)
             self.prefetch_thread = None
         else:
@@ -353,12 +412,12 @@ class DataCollector:
             self.token_queue = None
             self.prefetch_thread = None
 
-        # Setup multiprocessing
+    def _setup_multiprocessing(self):
+        """Configure multiprocessing resources"""
         mp.set_start_method("spawn", force=True)
 
         # Detect available GPUs
         self.num_gpus = torch.cuda.device_count()
-        # Use just one process if CPU-only (multiple CPU processes can cause memory issues)
         self.num_processes = self.num_gpus if self.num_gpus > 0 else 1
         self.devices = (
             [torch.device(f"cuda:{i}") for i in range(self.num_gpus)]
@@ -368,18 +427,10 @@ class DataCollector:
 
         logging.info(f"Using {self.num_processes} processes on devices: {self.devices}")
 
-        # Create shared memory tensors
-        self.setup_shared_tensors()
-
         # Initialize multiprocessing components
         self.task_queue = mp.Queue()
         self.result_queue = mp.Queue()
         self.processes = []
-
-        # Start prefetching tokens
-        self.prefetch_next_tokens()
-
-        self.start_worker_processes()
 
     def setup_shared_tensors(self):
         """Create shared memory tensors for input and output data"""
@@ -406,7 +457,6 @@ class DataCollector:
             device=CPU,
         ).share_memory_()
 
-        # Shared input tokens tensor that will be populated with data
         self.input_tokens = torch.zeros(
             (self.cfg.buffer_size_samples, self.cfg.target_ctx_len_toks),
             dtype=torch.int32,
@@ -438,7 +488,6 @@ class DataCollector:
 
     def prefetch_next_tokens(self):
         """Start a new thread to fetch the next batch of tokens"""
-        # Skip prefetching if using fake tokens
         if self.cfg.use_fake_tokens:
             return
 
@@ -451,19 +500,24 @@ class DataCollector:
                 tokens = next(self.token_stream)
                 self.token_queue.put(tokens)
             except StopIteration:
-                # Handle end of dataset if needed
+                # Handle end of dataset
                 self.token_queue.put(None)
 
         self.prefetch_thread = threading.Thread(target=fetch_worker)
         self.prefetch_thread.daemon = True
         self.prefetch_thread.start()
 
-    @print_gpu_memory_usage_fn
-    def collect_data(self):
-        """Coordinate the data collection across multiple GPUs"""
-        # Generate random tokens if using fake tokens, otherwise get prefetched tokens
+    def _load_tokens(self) -> torch.Tensor:
+        """
+        Load tokens into shared memory, either generating fake tokens
+        or fetching real ones from the token stream.
+
+        Returns:
+            The loaded tokens (also stored in self.input_tokens)
+        """
+        # Get or generate tokens
         if self.cfg.use_fake_tokens:
-            # Generate random tokens between 0 and vocab_size-1
+            # Generate random tokens for testing
             toks_init = torch.randint(
                 0,
                 self.cfg.vocab_size - 1,
@@ -472,12 +526,12 @@ class DataCollector:
                 device=CPU,
             )
         else:
-            # Get the prefetched tokens
+            # Get prefetched tokens
             toks_init = self.token_queue.get()
-            # Start prefetching the next batch
             self.prefetch_next_tokens()
             assert toks_init is not None, "Ran out of token data"
 
+        # Verify token shape
         assert toks_init.shape == (
             self.cfg.buffer_size_samples,
             self.cfg.target_ctx_len_toks,
@@ -486,11 +540,23 @@ class DataCollector:
         # Copy tokens to shared memory
         self.input_tokens.copy_(toks_init)
 
-        # Divide data equally across devices
-        samples_per_device = self.cfg.buffer_size_samples // self.num_processes
+        return toks_init
+
+    @print_gpu_memory_usage_fn
+    def collect_data(self):
+        """Coordinate data collection across multiple GPUs"""
+        # Load tokens into shared memory
+        self._load_tokens()
 
         # Distribute work to processes
+        self._distribute_work()
+
+    def _distribute_work(self):
+        """Distribute work among workers and wait for completion"""
+        samples_per_device = self.cfg.buffer_size_samples // self.num_processes
         submitted_tasks = 0
+
+        # Assign chunks to workers
         for i in range(self.num_processes):
             chunk_start = i * samples_per_device
             # Make sure the last chunk gets any remaining samples
@@ -505,16 +571,15 @@ class DataCollector:
         # Wait for all tasks to complete and check for errors
         completed_tasks = 0
         while completed_tasks < submitted_tasks:
-            # Get result (may be success or error)
             result = self.result_queue.get()
 
             # Check if it's an error or success
             if result[0] == "error":
-                # It's an error
+                # Handle error
                 error_str = result[1]
                 raise RuntimeError(f"Error in worker process: {error_str}")
 
-            # It's a success
+            # Handle successful completion
             _, chunk_start, chunk_end = result
             logging.info(f"Completed chunk {chunk_start}:{chunk_end}")
             completed_tasks += 1
