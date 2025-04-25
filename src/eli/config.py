@@ -18,14 +18,14 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(1e6)
+    num_train_samples: int = int(5e8)
 
     seed: int = 42
 
-    use_fake_tokens: bool = True
+    use_fake_tokens: bool = False
 
     # WandB configuration
-    wandb_enabled: bool = False
+    wandb_enabled: bool = True
     wandb_project: str = "eli"
 
     dataset_name: str = "allenai/c4"
@@ -35,15 +35,15 @@ class Config:
     target_model_name: str = "EleutherAI/pythia-14m"
     decoder_model_name: str = "EleutherAI/pythia-14m"
     vocab_size: int = 50304
-    target_ctx_len_toks: int = 4
-    decoder_pred_len_toks: int = 2
-    encoding_len_toks: int = 2
+    target_ctx_len_toks: int = 64
+    decoder_pred_len_toks: int = 32
+    encoding_len_toks: int = 8
 
-    train_batch_size_samples: int = 2048  # Per GPU
-    control_batch_size_samples: int = 2048  # Per GPU
+    train_batch_size_samples: int = 1024  # Per GPU
+    control_batch_size_samples: int = 1024  # Per GPU
     target_model_batch_size_samples: int = 8192  # Per GPU
 
-    buffer_size_samples: int = 65536
+    buffer_size_samples: int = 131072
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128
@@ -52,11 +52,11 @@ class Config:
     dtype: torch.dtype = dtypes["float16"]
 
     site: str = "resid_pre"
-    layer: int = 5
+    layer: int = 4
 
     dinalar_weight: float = 0
 
-    save_encoder_path: Optional[Path] = None
+    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
 
     @property
     def target_generation_len_toks(self):
@@ -80,9 +80,9 @@ cfg = Config()
 class EncoderConfig:
     n_layers: int = 2
     n_heads: int = 4
-    d_model: int = 64
-    d_head: int = 16
-    d_mlp: int = 256
+    d_model: int = 128
+    d_head: int = 32
+    d_mlp: int = 512
 
     lr: float = 1e-3
     weight_decay: float = 1e-2

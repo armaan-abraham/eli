@@ -15,8 +15,8 @@ from eli.utils import print_gpu_memory_usage_fn
 # Constants for prompts
 PROMPT_PREFIX = """<|system|>
 You are an expert at predicting what a language model will say next.
-<|user|> Your task is to predict what another LLM will say, given a
-description of what the LLM is currently thinking: \" 
+<|user|> Your task is to predict what another LLM will say, given the following
+explanation of what the LLM is currently thinking: \" 
 """
 
 PROMPT_SUFFIX = """\". Provide your prediction and nothing else.
