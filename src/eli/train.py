@@ -1,15 +1,15 @@
+import gc
 import os
 from typing import Dict
 
 import torch
+import wandb
 from tqdm import tqdm
 
-import wandb
 from eli.config import CPU, cfg, encoder_cfg
 from eli.data import DataCollector
 from eli.encoder import EncoderTrainer
 from eli.utils import print_gpu_memory_usage
-import gc
 
 # I think there may be a bug in huggingface, just force
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
@@ -49,74 +49,46 @@ def log_metrics(
 
 
 def train():
-    print("Starting training")
-    print_gpu_memory_usage()
     data_collector = DataCollector(cfg)
-    print("Data collector created")
-    print_gpu_memory_usage()
     encoder_trainer = EncoderTrainer(cfg, encoder_cfg)
-    print("Encoder trainer created")
-    print_gpu_memory_usage()
 
     # Initialize wandb only if enabled
     if cfg.wandb_enabled:
         wandb.init(project=cfg.wandb_project)
         wandb.config.update(cfg)
         wandb.config.update(encoder_cfg)
-    
-    print("Wandb initialized")
-    print_gpu_memory_usage()
 
     try:
         data_collector.prefetch_next_tokens()
-        print("Next tokens prefetched")
-        print_gpu_memory_usage()
 
         for train_iter in tqdm(range(cfg.num_train_iter), desc="Training"):
             collect_data(data_collector)
-            print("Data collected")
+
             gc.collect()
             torch.cuda.empty_cache()
-            print_gpu_memory_usage()
 
             encoder_trainer.move_models_to_device(cfg.device)
-            print("Encoder trainer models moved to device")
-            print_gpu_memory_usage()
             metrics = optimize_encoder(data_collector, encoder_trainer, train_iter)
-            print("Encoder optimized")
-            print_gpu_memory_usage()
-
-            gc.collect()
-            torch.cuda.empty_cache()
-            print("Garbage collected")
-            print_gpu_memory_usage()
 
             log_metrics(metrics, data_collector, encoder_trainer, train_iter)
-            print("Metrics logged")
-            print_gpu_memory_usage()
 
             encoder_trainer.move_models_to_device(CPU)
-            print("Encoder trainer models moved to CPU")
-            print_gpu_memory_usage()
 
             gc.collect()
             torch.cuda.empty_cache()
-            print("Garbage collected")
-            print_gpu_memory_usage()
 
     finally:
         data_collector.finish()
-        
+
         if cfg.wandb_enabled:
             wandb.finish()
-
-        print_gpu_memory_usage()
 
         if cfg.save_encoder_path:
             save_path = cfg.save_encoder_path
 
             save_path.parent.mkdir(parents=True, exist_ok=True)
             encoder_trainer.save_encoder(save_path)
+
 
 if __name__ == "__main__":
     train()

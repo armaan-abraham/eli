@@ -17,7 +17,7 @@ from datasets.arrow_dataset import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
-from eli.utils import print_gpu_memory_usage
+from eli.utils import print_gpu_memory_usage_fn
 
 this_dir = Path(__file__).parent
 cache_dir = this_dir / "cache"
@@ -241,7 +241,7 @@ def worker_process(
             logging.info(
                 f"Worker {proc_idx} processing chunk {chunk_start}:{chunk_end}"
             )
-            
+
             # Process the chunk in batches
             batch_size = cfg.target_model_batch_size_samples
             for batch_start in range(chunk_start, chunk_end, batch_size):
@@ -249,7 +249,7 @@ def worker_process(
                 logging.info(
                     f"Worker {proc_idx} processing batch {batch_start}:{batch_end}"
                 )
-                
+
                 # Process the batch
                 batch_toks = input_tokens[batch_start:batch_end].to(device)
 
@@ -268,7 +268,9 @@ def worker_process(
                     target_acts[batch_start:batch_end] = acts.cpu()
 
                     # Generate tokens
-                    length_toks = cfg.target_ctx_len_toks + cfg.target_generation_len_toks
+                    length_toks = (
+                        cfg.target_ctx_len_toks + cfg.target_generation_len_toks
+                    )
 
                     # Create attention mask
                     attention_mask = torch.ones_like(batch_toks, dtype=torch.int32)
@@ -287,7 +289,9 @@ def worker_process(
                     generated_tokens = batch_toks_with_gen[
                         :, -cfg.target_generation_len_toks :
                     ]
-                    target_generated_tokens[batch_start:batch_end] = generated_tokens.cpu()
+                    target_generated_tokens[batch_start:batch_end] = (
+                        generated_tokens.cpu()
+                    )
 
                     # Collect logits
                     with torch.no_grad():
@@ -295,7 +299,7 @@ def worker_process(
                             :, -cfg.decoder_pred_len_toks :, :
                         ]
                         target_logits[batch_start:batch_end] = logits.cpu()
-                    
+
                     del batch_toks_with_gen, logits, acts, cache
 
             peak_mem = torch.cuda.max_memory_allocated(device)
@@ -310,7 +314,7 @@ def worker_process(
 
             # Explicitly clear cached memory on the GPU after processing a chunk
             # and moving models to CPU.
-            if device.type == 'cuda':
+            if device.type == "cuda":
                 torch.cuda.empty_cache()
 
             # Notify completion of the entire chunk
@@ -319,7 +323,7 @@ def worker_process(
         logging.info(f"Worker {proc_idx} finished")
 
         # Clear cache one last time when worker exits normally
-        if device.type == 'cuda':
+        if device.type == "cuda":
             torch.cuda.empty_cache()
 
     except Exception as e:
@@ -328,15 +332,15 @@ def worker_process(
         result_queue.put(("error", error_str))
         logging.error(error_str)
         # Clear cache on error exit as well
-        if device.type == 'cuda':
-             torch.cuda.empty_cache()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
 
 class DataCollector:
     def __init__(self, cfg: Config = cfg):
         self.cfg = cfg
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
-        
+
         # Only create the token stream if not using fake tokens
         if not self.cfg.use_fake_tokens:
             self.token_stream = stream_training_chunks(cfg)
@@ -437,7 +441,7 @@ class DataCollector:
         # Skip prefetching if using fake tokens
         if self.cfg.use_fake_tokens:
             return
-        
+
         if self.prefetch_thread is not None and self.prefetch_thread.is_alive():
             # Wait for any existing prefetch to complete
             self.prefetch_thread.join()
@@ -454,17 +458,18 @@ class DataCollector:
         self.prefetch_thread.daemon = True
         self.prefetch_thread.start()
 
+    @print_gpu_memory_usage_fn
     def collect_data(self):
         """Coordinate the data collection across multiple GPUs"""
         # Generate random tokens if using fake tokens, otherwise get prefetched tokens
         if self.cfg.use_fake_tokens:
             # Generate random tokens between 0 and vocab_size-1
             toks_init = torch.randint(
-                0, 
-                self.cfg.vocab_size - 1, 
+                0,
+                self.cfg.vocab_size - 1,
                 (self.cfg.buffer_size_samples, self.cfg.target_ctx_len_toks),
                 dtype=torch.int32,
-                device=CPU
+                device=CPU,
             )
         else:
             # Get the prefetched tokens
@@ -484,9 +489,6 @@ class DataCollector:
         # Divide data equally across devices
         samples_per_device = self.cfg.buffer_size_samples // self.num_processes
 
-        print("Starting to distribute work to processes")
-        print_gpu_memory_usage()
-        
         # Distribute work to processes
         submitted_tasks = 0
         for i in range(self.num_processes):
@@ -495,7 +497,7 @@ class DataCollector:
             chunk_end = chunk_start + samples_per_device
             if i == self.num_processes - 1:
                 chunk_end = self.cfg.buffer_size_samples
-            
+
             self.task_queue.put((chunk_start, chunk_end))
             submitted_tasks += 1
             logging.info(f"Assigned chunk {chunk_start}:{chunk_end} to worker {i}")
@@ -505,20 +507,17 @@ class DataCollector:
         while completed_tasks < submitted_tasks:
             # Get result (may be success or error)
             result = self.result_queue.get()
-            
+
             # Check if it's an error or success
             if result[0] == "error":
                 # It's an error
                 error_str = result[1]
                 raise RuntimeError(f"Error in worker process: {error_str}")
-            
+
             # It's a success
             _, chunk_start, chunk_end = result
             logging.info(f"Completed chunk {chunk_start}:{chunk_end}")
             completed_tasks += 1
-        
-        print("All chunks processed successfully")
-        print_gpu_memory_usage()
 
         logging.info(f"All {completed_tasks} chunks processed successfully")
 
@@ -530,12 +529,12 @@ class DataCollector:
             "target_logits": self.target_logits,
             "target_acts": self.target_acts,
         }
-    
+
     def terminate_worker_processes(self):
         """Terminate worker processes"""
         for _ in range(len(self.processes)):
             self.task_queue.put(None)
-        
+
         for p in self.processes:
             p.join(timeout=10)
             if p.is_alive():
@@ -546,7 +545,11 @@ class DataCollector:
         self.terminate_worker_processes()
 
         # Wait for prefetch thread if it exists
-        if not self.cfg.use_fake_tokens and self.prefetch_thread and self.prefetch_thread.is_alive():
+        if (
+            not self.cfg.use_fake_tokens
+            and self.prefetch_thread
+            and self.prefetch_thread.is_alive()
+        ):
             self.prefetch_thread.join(timeout=5)
 
         logging.info("All resources cleaned up")

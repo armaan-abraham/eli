@@ -1,3 +1,5 @@
+import gc
+
 import torch
 from einops import einsum
 from jaxtyping import Float
@@ -5,11 +7,10 @@ from torch import Tensor
 from torch.amp import GradScaler
 from torch.nn import init
 from transformers import AutoModelForCausalLM, AutoTokenizer
-import gc
 
 from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
-from eli.utils import log_gpu_memory_usage, print_gpu_memory_usage
+from eli.utils import print_gpu_memory_usage_fn
 
 PROMPT_PREFIX = """<|system|>
 You are an expert at predicting what a language model will say next.
@@ -408,16 +409,7 @@ class EncoderTrainer:
             self.encoder_decoder = torch.nn.DataParallel(self.encoder_decoder)
             self.device_count = torch.cuda.device_count()
 
-
-        print("Before moving encoder decoder to device")
-        print_gpu_memory_usage()
-
         self.encoder_decoder.to(self.cfg.device)
-
-        print("After moving encoder decoder to device")
-        gc.collect()
-        torch.cuda.empty_cache()
-        print_gpu_memory_usage()
 
         self.optimizer = torch.optim.AdamW(
             self.encoder_decoder.parameters(),
@@ -427,11 +419,6 @@ class EncoderTrainer:
         )
 
         self.encoder_decoder.to(CPU)
-
-        print("After initializing optimizer and moving encoder decoder to CPU")
-        gc.collect()
-        torch.cuda.empty_cache()
-        print_gpu_memory_usage()
 
         self.scaler = GradScaler()
 
@@ -492,7 +479,7 @@ class EncoderTrainer:
                 dinalar_loss,
             )
 
-    @log_gpu_memory_usage
+    @print_gpu_memory_usage_fn
     def train(self, data_collector: DataCollector, train_iter: int = -1):
         # Load all data
         data = data_collector.data
@@ -504,9 +491,6 @@ class EncoderTrainer:
         buffer_size = target_acts.shape[0]
         batch_size = self.cfg.train_batch_size_samples * self.device_count
         num_batches = buffer_size // batch_size
-
-        print(f"Inside training")
-        print_gpu_memory_usage()
 
         results = {
             "loss": [],
@@ -524,9 +508,6 @@ class EncoderTrainer:
             start_idx = batch_idx * batch_size
             end_idx = start_idx + batch_size
 
-            print(f"Batch {batch_idx} of {num_batches}")
-            print_gpu_memory_usage()
-
             # Extract batch data
             batch_tokens = target_generated_tokens[start_idx:end_idx].to(
                 self.cfg.device
@@ -534,22 +515,13 @@ class EncoderTrainer:
             batch_logits = target_logits[start_idx:end_idx].to(self.cfg.device)
             batch_acts = target_acts[start_idx:end_idx].to(self.cfg.device)
 
-            print(f"Batch {batch_idx} of {num_batches} after extracting batch data")
-            print_gpu_memory_usage()
-
             self.optimizer.zero_grad()
 
             loss, target_prediction_loss, dinalar_loss = self.loss(
                 batch_tokens, batch_logits, batch_acts, train_iter
             )
 
-            print(f"Batch {batch_idx} of {num_batches} after computing loss")
-            print_gpu_memory_usage()
-
             self.scaler.scale(loss).backward()
-
-            print(f"Batch {batch_idx} of {num_batches} after backward")
-            print_gpu_memory_usage()
 
             self.scaler.unscale_(self.optimizer)
 
@@ -572,7 +544,15 @@ class EncoderTrainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
-            del batch_tokens, batch_logits, batch_acts, loss, target_prediction_loss, dinalar_loss, grad_stats
+            del (
+                batch_tokens,
+                batch_logits,
+                batch_acts,
+                loss,
+                target_prediction_loss,
+                dinalar_loss,
+                grad_stats,
+            )
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -582,8 +562,6 @@ class EncoderTrainer:
         assert all(
             l == lens[0] for l in lens
         ), f"All lengths must be the same, got {lens}"
-
-        print("Length:", lens[0])
 
         return results
 
