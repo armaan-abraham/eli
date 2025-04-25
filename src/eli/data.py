@@ -266,6 +266,89 @@ def _process_batch(
             target_logits[batch_start:batch_end] = logits.cpu()
 
 
+def process_data_chunk(
+    chunk_start: int,
+    chunk_end: int,
+    input_tokens: torch.Tensor,
+    target_acts: torch.Tensor,
+    target_generated_tokens: torch.Tensor,
+    target_logits: torch.Tensor,
+    cfg: Config,
+    device: torch.device,
+    target_model: Optional[AutoModelForCausalLM] = None,
+    target_model_act_collection: Optional[transformer_lens.HookedTransformer] = None,
+    tokenizer: Optional[AutoTokenizer] = None,
+) -> None:
+    """
+    Process a chunk of data through the models.
+
+    Args:
+        chunk_start, chunk_end: Start and end indices of the chunk to process
+        input_tokens, target_acts, target_generated_tokens, target_logits: Data tensors
+        cfg: Configuration object
+        device: Device to run computation on
+        target_model: Model for token generation (loaded if None)
+        target_model_act_collection: Model for activation collection (loaded if None)
+        tokenizer: Tokenizer for the models (loaded if None)
+    """
+    # Load models if not provided
+    models_loaded_here = False
+    if target_model is None or target_model_act_collection is None or tokenizer is None:
+        models_loaded_here = True
+        tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+        target_model = AutoModelForCausalLM.from_pretrained(cfg.target_model_name).to(
+            device
+        )
+        target_model_act_collection = (
+            transformer_lens.HookedTransformer.from_pretrained(
+                cfg.target_model_name
+            ).to(device)
+        )
+
+    # Reset memory stats before starting
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+
+    logging.info(f"Processing chunk {chunk_start}:{chunk_end} on {device}")
+
+    # Process the chunk in batches
+    batch_size = cfg.target_model_batch_size_samples
+    for batch_start in range(chunk_start, chunk_end, batch_size):
+        batch_end = min(batch_start + batch_size, chunk_end)
+        logging.info(f"Processing batch {batch_start}:{batch_end}")
+
+        # Get batch tokens and process
+        batch_toks = input_tokens[batch_start:batch_end].to(device)
+        _process_batch(
+            batch_toks,
+            batch_start,
+            batch_end,
+            target_model,
+            target_model_act_collection,
+            tokenizer,
+            target_acts,
+            target_generated_tokens,
+            target_logits,
+            cfg,
+            device,
+        )
+
+    # Log memory stats for the whole chunk
+    if device.type == "cuda":
+        max_allocated = torch.cuda.max_memory_allocated(device) / (1024**3)  # GB
+        max_reserved = torch.cuda.max_memory_reserved(device) / (1024**3)  # GB
+        logging.info(
+            f"CHUNK {chunk_start}:{chunk_end} COMPLETED, "
+            f"Max GPU memory allocated: {max_allocated:.2f} GB, "
+            f"Max GPU memory reserved: {max_reserved:.2f} GB"
+        )
+
+    # Clean up models if we loaded them
+    if models_loaded_here:
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+
 def worker_process(
     proc_idx: int,
     device: torch.device,
@@ -311,47 +394,26 @@ def worker_process(
             # Move models to device for processing
             target_model.to(device)
             target_model_act_collection.to(device)
-            
-            # Reset memory stats before starting new task
-            if device.type == "cuda":
-                torch.cuda.reset_peak_memory_stats(device)
-            
+
             chunk_start, chunk_end = chunk_range
             logging.info(
                 f"Worker {proc_idx} processing chunk {chunk_start}:{chunk_end}"
             )
 
-            # Process the chunk in batches
-            batch_size = cfg.target_model_batch_size_samples
-            for batch_start in range(chunk_start, chunk_end, batch_size):
-                batch_end = min(batch_start + batch_size, chunk_end)
-                logging.info(
-                    f"Worker {proc_idx} processing batch {batch_start}:{batch_end}"
-                )
-
-                # Get batch tokens and process
-                batch_toks = input_tokens[batch_start:batch_end].to(device)
-                _process_batch(
-                    batch_toks,
-                    batch_start,
-                    batch_end,
-                    target_model,
-                    target_model_act_collection,
-                    tokenizer,
-                    target_acts,
-                    target_generated_tokens,
-                    target_logits,
-                    cfg,
-                    device,
-                )
-
-            # Get final memory stats for the whole chunk
-            if device.type == "cuda":
-                max_allocated = torch.cuda.max_memory_allocated(device) / (1024 ** 3)  # GB
-                max_reserved = torch.cuda.max_memory_reserved(device) / (1024 ** 3)    # GB
-                logging.info(f"Worker {proc_idx}, CHUNK {chunk_start}:{chunk_end} COMPLETED, "
-                             f"Max GPU memory allocated: {max_allocated:.2f} GB, "
-                             f"Max GPU memory reserved: {max_reserved:.2f} GB")
+            # Process the chunk using the helper function
+            process_data_chunk(
+                chunk_start,
+                chunk_end,
+                input_tokens,
+                target_acts,
+                target_generated_tokens,
+                target_logits,
+                cfg,
+                device,
+                target_model,
+                target_model_act_collection,
+                tokenizer,
+            )
 
             # Move models back to CPU and clear GPU memory
             target_model.to(CPU)
@@ -386,7 +448,7 @@ class DataCollector:
     Handles token streaming, worker processes, and data aggregation.
     """
 
-    def __init__(self, cfg: Config = cfg):
+    def __init__(self, cfg: Config = cfg, use_workers: bool = True):
         """
         Initialize the data collector.
 
@@ -395,12 +457,14 @@ class DataCollector:
         """
         self.cfg = cfg
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+        self.use_workers = use_workers
 
         # Setup token streaming
         self._setup_token_streaming()
 
         # Setup multiprocessing
-        self._setup_multiprocessing()
+        if self.use_workers:
+            self._setup_multiprocessing()
 
         # Create shared memory tensors
         self.setup_shared_tensors()
@@ -409,7 +473,8 @@ class DataCollector:
         self.prefetch_next_tokens()
 
         # Start worker processes
-        self.start_worker_processes()
+        if self.use_workers:
+            self.start_worker_processes()
 
     def _setup_token_streaming(self):
         """Configure token streaming based on configuration"""
@@ -447,30 +512,49 @@ class DataCollector:
         """Create shared memory tensors for input and output data"""
         # Calculate and log memory sizes before initialization
         target_generated_tokens_size = (
-            self.cfg.buffer_size_samples * self.cfg.target_generation_len_toks * 4  # int32 = 4 bytes
+            self.cfg.buffer_size_samples
+            * self.cfg.target_generation_len_toks
+            * 4  # int32 = 4 bytes
         )
         target_logits_size = (
-            self.cfg.buffer_size_samples * self.cfg.decoder_pred_len_toks * self.cfg.vocab_size * 4  # float32 = 4 bytes
+            self.cfg.buffer_size_samples
+            * self.cfg.decoder_pred_len_toks
+            * self.cfg.vocab_size
+            * 4  # float32 = 4 bytes
         )
         target_acts_size = (
-            self.cfg.buffer_size_samples * self.cfg.target_model_act_dim * 4  # float32 = 4 bytes
+            self.cfg.buffer_size_samples
+            * self.cfg.target_model_act_dim
+            * 4  # float32 = 4 bytes
         )
         input_tokens_size = (
-            self.cfg.buffer_size_samples * self.cfg.target_ctx_len_toks * 4  # int32 = 4 bytes
+            self.cfg.buffer_size_samples
+            * self.cfg.target_ctx_len_toks
+            * 4  # int32 = 4 bytes
         )
-        
+
         # Log sizes in more readable format (bytes, KB, MB, GB)
-        logging.info(f"target_generated_tokens size: {target_generated_tokens_size} bytes "
-                     f"({target_generated_tokens_size/1024/1024:.2f} MB)")
-        logging.info(f"target_logits size: {target_logits_size} bytes "
-                     f"({target_logits_size/1024/1024:.2f} MB)")
-        logging.info(f"target_acts size: {target_acts_size} bytes "
-                     f"({target_acts_size/1024/1024:.2f} MB)")
-        logging.info(f"input_tokens size: {input_tokens_size} bytes "
-                     f"({input_tokens_size/1024/1024:.2f} MB)")
-        logging.info(f"Total shared memory size: "
-                     f"{(target_generated_tokens_size + target_logits_size + target_acts_size + input_tokens_size)/1024/1024/1024:.2f} GB")
-        
+        logging.info(
+            f"target_generated_tokens size: {target_generated_tokens_size} bytes "
+            f"({target_generated_tokens_size/1024/1024:.2f} MB)"
+        )
+        logging.info(
+            f"target_logits size: {target_logits_size} bytes "
+            f"({target_logits_size/1024/1024:.2f} MB)"
+        )
+        logging.info(
+            f"target_acts size: {target_acts_size} bytes "
+            f"({target_acts_size/1024/1024:.2f} MB)"
+        )
+        logging.info(
+            f"input_tokens size: {input_tokens_size} bytes "
+            f"({input_tokens_size/1024/1024:.2f} MB)"
+        )
+        logging.info(
+            f"Total shared memory size: "
+            f"{(target_generated_tokens_size + target_logits_size + target_acts_size + input_tokens_size)/1024/1024/1024:.2f} GB"
+        )
+
         # Define shared memory tensors with proper dtype for storage
         self.target_generated_tokens = torch.zeros(
             (self.cfg.buffer_size_samples, self.cfg.target_generation_len_toks),
@@ -585,7 +669,26 @@ class DataCollector:
         self._load_tokens()
 
         # Distribute work to processes
-        self._distribute_work()
+        if self.use_workers:
+            self._distribute_work()
+        else:
+            # Process data directly in the main process
+            device = self.cfg.device
+            logging.info(f"Processing data directly on {device} without workers")
+
+            # Process the entire buffer as a single chunk
+            process_data_chunk(
+                0,
+                self.cfg.buffer_size_samples,
+                self.input_tokens,
+                self.target_acts,
+                self.target_generated_tokens,
+                self.target_logits,
+                self.cfg,
+                device,
+            )
+
+            logging.info("Direct data processing completed")
 
     def _distribute_work(self):
         """Distribute work among workers and wait for completion"""
@@ -643,7 +746,8 @@ class DataCollector:
 
     def finish(self):
         """Clean up resources and terminate worker processes"""
-        self.terminate_worker_processes()
+        if self.use_workers:
+            self.terminate_worker_processes()
 
         # Wait for prefetch thread if it exists
         if (

@@ -38,6 +38,7 @@ click==8.1.8
     # via wandb
 comm==0.2.2
     # via ipykernel
+    # via ipywidgets
 datasets==3.5.0
     # via eli
     # via transformer-lens
@@ -87,8 +88,11 @@ ipykernel==6.29.5
     # via eli
 ipython==9.1.0
     # via ipykernel
+    # via ipywidgets
 ipython-pygments-lexers==1.1.1
     # via ipython
+ipywidgets==8.1.6
+    # via eli
 jaxtyping==0.3.1
     # via eli
     # via transformer-lens
@@ -101,6 +105,8 @@ jupyter-client==8.6.3
 jupyter-core==5.7.2
     # via ipykernel
     # via jupyter-client
+jupyterlab-widgets==3.0.14
+    # via ipywidgets
 markdown-it-py==3.0.0
     # via rich
 markupsafe==3.0.2
@@ -266,6 +272,7 @@ traitlets==5.14.3
     # via comm
     # via ipykernel
     # via ipython
+    # via ipywidgets
     # via jupyter-client
     # via jupyter-core
     # via matplotlib-inline
@@ -303,6 +310,8 @@ wandb==0.19.9
     # via transformer-lens
 wcwidth==0.2.13
     # via prompt-toolkit
+widgetsnbextension==4.0.14
+    # via ipywidgets
 xxhash==3.5.0
     # via datasets
 yarl==1.19.0
