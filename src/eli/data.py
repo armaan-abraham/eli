@@ -34,6 +34,9 @@ def load_tokenizer():
     tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
     return tokenizer
 
+def move_transformer_lens_model_to_device(model: transformer_lens.HookedTransformer, device: torch.device):
+    model.cfg.device = device
+    model.move_model_modules_to_device()
 
 def keep_single_column(dataset: Dataset, col_name: str) -> Dataset:
     """
@@ -292,6 +295,7 @@ def process_data_chunk(
     # Load models if not provided
     models_loaded_here = False
     if target_model is None or target_model_act_collection is None or tokenizer is None:
+        print(f"Loading models in process_data_chunk on {device}")
         models_loaded_here = True
         tokenizer = load_tokenizer()
         target_model = AutoModelForCausalLM.from_pretrained(cfg.target_model_name).to(
@@ -370,13 +374,16 @@ def worker_process(
     try:
         # Load models in the worker process
         tokenizer = load_tokenizer()
-        target_model = AutoModelForCausalLM.from_pretrained(cfg.target_model_name).to(
-            CPU
+        target_model = AutoModelForCausalLM.from_pretrained(
+            cfg.target_model_name,
         )
+
         target_model_act_collection = (
             transformer_lens.HookedTransformer.from_pretrained(
-                cfg.target_model_name
-            ).to(CPU)
+                cfg.target_model_name,
+                device=CPU,
+                n_devices=1,
+            )
         )
 
         logging.info(f"Worker {proc_idx} loaded models on {device}")
@@ -388,8 +395,8 @@ def worker_process(
                 break
 
             # Move models to device for processing
-            target_model.to(device)
-            target_model_act_collection.to(device)
+            # target_model.to(device)
+            # move_transformer_lens_model_to_device(target_model_act_collection, device)
 
             chunk_start, chunk_end = chunk_range
             logging.info(
@@ -411,8 +418,8 @@ def worker_process(
             )
 
             # Move models back to CPU and clear GPU memory
-            target_model.to(CPU)
-            target_model_act_collection.to(CPU)
+            # target_model.to(CPU)
+            # move_transformer_lens_model_to_device(target_model_act_collection, CPU)
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
