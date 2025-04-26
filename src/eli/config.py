@@ -33,22 +33,22 @@ class Config:
     dataset_column_name: str = "text"
     dataset_batch_size_entries: int = 20
 
-    target_model_name: str = "EleutherAI/pythia-14m"
-    decoder_model_name: str = "EleutherAI/pythia-14m"
+    target_model_name: str = "EleutherAI/pythia-31m"
+    decoder_model_name: str = "EleutherAI/pythia-31m"
     vocab_size_target: int = 50304
     vocab_size_decoder: int = 50304
     target_ctx_len_toks: int = 64
     decoder_pred_len_toks: int = 16
     encoding_len_toks: int = 4
 
-    train_batch_size_samples: int = 512  # Per GPU
-    control_batch_size_samples: int = 512  # Per GPU
+    train_batch_size_samples: int = 256  # Per GPU
+    control_batch_size_samples: int = 256  # Per GPU
     target_model_batch_size_samples: int = 4096  # Per GPU
 
     buffer_size_samples: int = 16384
 
-    target_model_act_dim: int = 128
-    decoder_model_embed_dim: int = 128
+    target_model_act_dim: int = 256
+    decoder_model_embed_dim: int = 256
 
     device: torch.device = torch.device("cuda")
     dtype: torch.dtype = dtypes["float16"]
