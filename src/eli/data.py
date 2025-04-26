@@ -14,6 +14,7 @@ import torch.multiprocessing as mp
 import transformer_lens
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
+from jaxtyping import Int
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
@@ -26,6 +27,12 @@ cache_dir.mkdir(parents=True, exist_ok=True)
 # Set environment variables
 os.environ["TRANSFORMERS_CACHE"] = str(cache_dir)
 os.environ["DATASETS_CACHE"] = str(cache_dir)
+
+
+def load_tokenizer():
+    # Handles custom schlepping and idiosyncracies for loading the currently specified tok
+    tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+    return tokenizer
 
 
 def keep_single_column(dataset: Dataset, col_name: str) -> Dataset:
@@ -184,13 +191,13 @@ def stream_training_chunks(cfg: Config = cfg):
     )
 
     # Tokenize the dataset
-    tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+    tokenizer = load_tokenizer()
     dataset_iter = tokenize_and_concatenate(
         dataset_iter,
         tokenizer,
         streaming=True,
         max_length=cfg.target_ctx_len_toks,
-        add_bos_token=False,
+        add_bos_token=True,
         column_name=cfg.dataset_column_name,
     )
 
@@ -201,7 +208,7 @@ def stream_training_chunks(cfg: Config = cfg):
 
 
 def _process_batch(
-    batch_toks: torch.Tensor,
+    batch_toks: Int[torch.Tensor, "batch tok"],
     batch_start: int,
     batch_end: int,
     target_model: AutoModelForCausalLM,
@@ -209,7 +216,6 @@ def _process_batch(
     tokenizer: AutoTokenizer,
     target_acts: torch.Tensor,
     target_generated_tokens: torch.Tensor,
-    target_logits: torch.Tensor,
     cfg: Config,
     device: torch.device,
 ) -> None:
@@ -222,7 +228,7 @@ def _process_batch(
         target_model: Model for token generation
         target_model_act_collection: Model for activation collection
         tokenizer: Tokenizer for the models
-        target_acts, target_generated_tokens, target_logits: Output tensors
+        target_acts, target_generated_tokens: Output tensors
         cfg: Configuration object
         device: Device to run computation on
     """
@@ -250,20 +256,13 @@ def _process_batch(
             attention_mask=attention_mask,
             max_length=length_toks,
             min_length=length_toks,
-            do_sample=False,
+            do_sample=True,
             pad_token_id=tokenizer.eos_token_id,
         )
 
         # Store generated tokens in shared memory
         generated_tokens = batch_toks_with_gen[:, -cfg.target_generation_len_toks :]
         target_generated_tokens[batch_start:batch_end] = generated_tokens.cpu()
-
-        # Collect logits
-        with torch.no_grad():
-            logits = target_model(batch_toks_with_gen).logits[
-                :, -cfg.decoder_pred_len_toks :, :
-            ]
-            target_logits[batch_start:batch_end] = logits.cpu()
 
 
 def process_data_chunk(
@@ -272,7 +271,6 @@ def process_data_chunk(
     input_tokens: torch.Tensor,
     target_acts: torch.Tensor,
     target_generated_tokens: torch.Tensor,
-    target_logits: torch.Tensor,
     cfg: Config,
     device: torch.device,
     target_model: Optional[AutoModelForCausalLM] = None,
@@ -284,7 +282,7 @@ def process_data_chunk(
 
     Args:
         chunk_start, chunk_end: Start and end indices of the chunk to process
-        input_tokens, target_acts, target_generated_tokens, target_logits: Data tensors
+        input_tokens, target_acts, target_generated_tokens: Data tensors
         cfg: Configuration object
         device: Device to run computation on
         target_model: Model for token generation (loaded if None)
@@ -295,7 +293,7 @@ def process_data_chunk(
     models_loaded_here = False
     if target_model is None or target_model_act_collection is None or tokenizer is None:
         models_loaded_here = True
-        tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+        tokenizer = load_tokenizer()
         target_model = AutoModelForCausalLM.from_pretrained(cfg.target_model_name).to(
             device
         )
@@ -328,7 +326,6 @@ def process_data_chunk(
             tokenizer,
             target_acts,
             target_generated_tokens,
-            target_logits,
             cfg,
             device,
         )
@@ -358,7 +355,6 @@ def worker_process(
     input_tokens: torch.Tensor,
     target_acts: torch.Tensor,
     target_generated_tokens: torch.Tensor,
-    target_logits: torch.Tensor,
 ) -> None:
     """
     Worker process that loads models and processes batches.
@@ -369,11 +365,11 @@ def worker_process(
         task_queue: Queue to get tasks from
         result_queue: Queue to report results
         cfg: Configuration object
-        input_tokens, target_acts, target_generated_tokens, target_logits: Shared tensors
+        input_tokens, target_acts, target_generated_tokens: Shared tensors
     """
     try:
         # Load models in the worker process
-        tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
+        tokenizer = load_tokenizer()
         target_model = AutoModelForCausalLM.from_pretrained(cfg.target_model_name).to(
             CPU
         )
@@ -407,7 +403,6 @@ def worker_process(
                 input_tokens,
                 target_acts,
                 target_generated_tokens,
-                target_logits,
                 cfg,
                 device,
                 target_model,
@@ -448,7 +443,7 @@ class DataCollector:
     Handles token streaming, worker processes, and data aggregation.
     """
 
-    def __init__(self, cfg: Config = cfg, use_workers: bool = True):
+    def __init__(self, cfg: Config = cfg):
         """
         Initialize the data collector.
 
@@ -456,8 +451,8 @@ class DataCollector:
             cfg: Configuration object
         """
         self.cfg = cfg
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.target_model_name)
-        self.use_workers = use_workers
+        self.tokenizer = load_tokenizer()
+        self.use_workers = cfg.use_data_collector_workers
 
         # Setup token streaming
         self._setup_token_streaming()
@@ -516,12 +511,6 @@ class DataCollector:
             * self.cfg.target_generation_len_toks
             * 4  # int32 = 4 bytes
         )
-        target_logits_size = (
-            self.cfg.buffer_size_samples
-            * self.cfg.decoder_pred_len_toks
-            * self.cfg.vocab_size
-            * 4  # float32 = 4 bytes
-        )
         target_acts_size = (
             self.cfg.buffer_size_samples
             * self.cfg.target_model_act_dim
@@ -539,10 +528,6 @@ class DataCollector:
             f"({target_generated_tokens_size/1024/1024:.2f} MB)"
         )
         logging.info(
-            f"target_logits size: {target_logits_size} bytes "
-            f"({target_logits_size/1024/1024:.2f} MB)"
-        )
-        logging.info(
             f"target_acts size: {target_acts_size} bytes "
             f"({target_acts_size/1024/1024:.2f} MB)"
         )
@@ -552,23 +537,13 @@ class DataCollector:
         )
         logging.info(
             f"Total shared memory size: "
-            f"{(target_generated_tokens_size + target_logits_size + target_acts_size + input_tokens_size)/1024/1024/1024:.2f} GB"
+            f"{(target_generated_tokens_size + target_acts_size + input_tokens_size)/1024**3:.2f} GB"
         )
 
         # Define shared memory tensors with proper dtype for storage
         self.target_generated_tokens = torch.zeros(
             (self.cfg.buffer_size_samples, self.cfg.target_generation_len_toks),
             dtype=torch.int32,
-            device=CPU,
-        ).share_memory_()
-
-        self.target_logits = torch.zeros(
-            (
-                self.cfg.buffer_size_samples,
-                self.cfg.decoder_pred_len_toks,
-                self.cfg.vocab_size,
-            ),
-            dtype=torch.float32,
             device=CPU,
         ).share_memory_()
 
@@ -599,7 +574,6 @@ class DataCollector:
                     self.input_tokens,
                     self.target_acts,
                     self.target_generated_tokens,
-                    self.target_logits,
                 ),
                 daemon=True,
             )
@@ -641,7 +615,7 @@ class DataCollector:
             # Generate random tokens for testing
             toks_init = torch.randint(
                 0,
-                self.cfg.vocab_size - 1,
+                self.cfg.vocab_size_target - 1,
                 (self.cfg.buffer_size_samples, self.cfg.target_ctx_len_toks),
                 dtype=torch.int32,
                 device=CPU,
@@ -683,7 +657,6 @@ class DataCollector:
                 self.input_tokens,
                 self.target_acts,
                 self.target_generated_tokens,
-                self.target_logits,
                 self.cfg,
                 device,
             )
@@ -730,7 +703,6 @@ class DataCollector:
         """Return the collected data"""
         return {
             "target_generated_tokens": self.target_generated_tokens,
-            "target_logits": self.target_logits,
             "target_acts": self.target_acts,
         }
 

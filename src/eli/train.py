@@ -3,9 +3,9 @@ import os
 from typing import Dict
 
 import torch
-import wandb
 from tqdm import tqdm
 
+import wandb
 from eli.config import CPU, cfg, encoder_cfg
 from eli.data import DataCollector
 from eli.encoder import EncoderTrainer
@@ -47,11 +47,16 @@ def log_metrics(
         }
     )
 
+    # Log per-batch metrics
     for i in range(n_iter):
         log_dict = {}
         for key, val in metrics.items():
-            log_dict[key] = val[i]
+            if isinstance(val, list):
+                log_dict[key] = val[i]
         wandb.log(log_dict)
+
+    # Log per-buffer metrics
+    wandb.log({k: v for k, v in metrics.items() if not isinstance(v, list)})
 
 
 def train():
