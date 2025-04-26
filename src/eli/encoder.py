@@ -573,8 +573,14 @@ def calculate_dinalar_loss(
     Returns:
         Dinalar loss
     """
-    # Compute kl divergence from decoder logits to encoder output logits
-    return kl_div(encoder_output_logits, decoder_logits_encoding_tokens)
+    # Compute cross entropy loss between top prediction of decoder and decoder outputs
+    decoder_top_preds = torch.argmax(decoder_logits_encoding_tokens, dim=-1)  # [batch tok]
+    loss = torch.nn.functional.cross_entropy(
+        encoder_output_logits.permute(0, 2, 1), # [batch vocab tok]
+        decoder_top_preds.long(),
+        reduction="mean",
+    )
+    return loss
 
 
 def calculate_target_prediction_loss(
@@ -734,6 +740,7 @@ class EncoderTrainer:
         }
 
         # Training loop
+        print(f"Training for {num_batches} batches")
         for batch_idx in range(num_batches):
             start_idx = batch_idx * batch_size
             end_idx = start_idx + batch_size
@@ -757,6 +764,9 @@ class EncoderTrainer:
                     train_iter,
                 )
             )
+
+            if batch_idx == num_batches - 1:
+                encoder_output_logits_last = encoder_output_logits
 
             # Backward pass with gradient scaling
             self.scaler.scale(loss).backward()
@@ -790,6 +800,7 @@ class EncoderTrainer:
                 target_prediction_loss,
                 dinalar_loss,
                 grad_stats,
+                encoder_output_logits,
             )
             gc.collect()
             torch.cuda.empty_cache()
@@ -805,7 +816,9 @@ class EncoderTrainer:
             )
 
         # Add per-buffer metrics
-        results["encoder_output_logits_gini"] = calculate_gini(encoder_output_logits)
+        results["encoder_output_logits_gini"] = calculate_gini(
+            encoder_output_logits_last
+        )
 
         return results
 
@@ -855,7 +868,7 @@ class EncoderTrainer:
                 ).logits[:, -self.cfg.decoder_pred_len_toks - 1 : -1, :]
                 # Calculate KL loss
                 loss = calculate_target_prediction_loss(
-                    decoder_logits, target_generated_tokens
+                    decoder_logits, tokens
                 )
 
         return loss.item()

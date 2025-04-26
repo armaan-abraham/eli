@@ -18,12 +18,12 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(4)
+    num_train_samples: int = int(1e7)
 
     seed: int = 42
 
     use_fake_tokens: bool = False
-    use_data_collector_workers: bool = False
+    use_data_collector_workers: bool = True
 
     # WandB configuration
     wandb_enabled: bool = True
@@ -37,28 +37,28 @@ class Config:
     decoder_model_name: str = "EleutherAI/pythia-14m"
     vocab_size_target: int = 50304
     vocab_size_decoder: int = 50304
-    target_ctx_len_toks: int = 6
-    decoder_pred_len_toks: int = 4
-    encoding_len_toks: int = 2
+    target_ctx_len_toks: int = 64
+    decoder_pred_len_toks: int = 16
+    encoding_len_toks: int = 4
 
-    train_batch_size_samples: int = 4  # Per GPU
-    control_batch_size_samples: int = 4  # Per GPU
-    target_model_batch_size_samples: int = 4  # Per GPU
+    train_batch_size_samples: int = 512  # Per GPU
+    control_batch_size_samples: int = 512  # Per GPU
+    target_model_batch_size_samples: int = 4096  # Per GPU
 
-    buffer_size_samples: int = 4
+    buffer_size_samples: int = 16384
 
     target_model_act_dim: int = 128
     decoder_model_embed_dim: int = 128
 
-    device: torch.device = CPU
-    dtype: torch.dtype = dtypes["float32"]
+    device: torch.device = torch.device("cuda")
+    dtype: torch.dtype = dtypes["float16"]
 
     site: str = "resid_pre"
     layer: int = 4
 
     dinalar_weight: float = 1e-3
 
-    save_encoder_path: Optional[Path] = None
+    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
 
     @property
     def target_generation_len_toks(self):
