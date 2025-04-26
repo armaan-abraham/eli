@@ -15,6 +15,7 @@ dependencies = [
     "transformer-lens>=2.15.0",
     "jaxtyping>=0.3.1",
     "ipywidgets>=8.1.6",
+    "pandas>=2.2.3",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
