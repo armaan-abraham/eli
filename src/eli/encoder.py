@@ -500,6 +500,7 @@ class EncoderDecoder(torch.nn.Module):
 def kl_div(
     proposed_logits: Float[Tensor, "batch tok vocab"],
     target_logits: Float[Tensor, "batch tok vocab"],
+    reduction: str = "sum",
 ):
     """Calculate KL divergence between two sets of logits.
 
@@ -529,7 +530,7 @@ def kl_div(
     kl = torch.nn.functional.kl_div(
         torch.log(proposed_probs),
         target_probs,
-        reduction="sum",
+        reduction=reduction,
         log_target=False,
     ) / (proposed_logits.shape[0] * proposed_logits.shape[1])
 
