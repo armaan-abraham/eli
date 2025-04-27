@@ -22,19 +22,19 @@ class Config:
 
     seed: int = 42
 
-    use_fake_tokens: bool = False
+    use_fake_tokens: bool = True
     use_data_collector_workers: bool = True
 
     # WandB configuration
-    wandb_enabled: bool = True
+    wandb_enabled: bool = False
     wandb_project: str = "eli"
 
     dataset_name: str = "allenai/c4"
     dataset_column_name: str = "text"
     dataset_batch_size_entries: int = 20
 
-    target_model_name: str = "EleutherAI/pythia-31m"
-    decoder_model_name: str = "EleutherAI/pythia-31m"
+    target_model_name: str = "EleutherAI/pythia-70m"
+    decoder_model_name: str = "EleutherAI/pythia-70m"
     vocab_size_target: int = 50304
     vocab_size_decoder: int = 50304
     target_ctx_len_toks: int = 64
@@ -47,8 +47,8 @@ class Config:
 
     buffer_size_samples: int = 16384
 
-    target_model_act_dim: int = 256
-    decoder_model_embed_dim: int = 256
+    target_model_act_dim: int = 512
+    decoder_model_embed_dim: int = 512
 
     device: torch.device = torch.device("cuda")
     dtype: torch.dtype = dtypes["float16"]
@@ -58,7 +58,7 @@ class Config:
 
     dinalar_weight: float = 1e-3
 
-    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
+    save_encoder_path: Optional[Path] = None
 
     @property
     def target_generation_len_toks(self):
