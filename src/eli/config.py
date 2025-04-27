@@ -18,15 +18,15 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(1e7)
+    num_train_samples: int = int(5e7)
 
     seed: int = 42
 
-    use_fake_tokens: bool = True
+    use_fake_tokens: bool = False
     use_data_collector_workers: bool = True
 
     # WandB configuration
-    wandb_enabled: bool = False
+    wandb_enabled: bool = True
     wandb_project: str = "eli"
 
     dataset_name: str = "allenai/c4"
@@ -38,14 +38,14 @@ class Config:
     vocab_size_target: int = 50304
     vocab_size_decoder: int = 50304
     target_ctx_len_toks: int = 64
-    decoder_pred_len_toks: int = 16
-    encoding_len_toks: int = 4
+    decoder_pred_len_toks: int = 32
+    encoding_len_toks: int = 8
 
     train_batch_size_samples: int = 256  # Per GPU
     control_batch_size_samples: int = 256  # Per GPU
-    target_model_batch_size_samples: int = 4096  # Per GPU
+    target_model_batch_size_samples: int = 2048  # Per GPU
 
-    buffer_size_samples: int = 16384
+    buffer_size_samples: int = 65536
 
     target_model_act_dim: int = 512
     decoder_model_embed_dim: int = 512
@@ -56,9 +56,9 @@ class Config:
     site: str = "resid_pre"
     layer: int = 4
 
-    dinalar_weight: float = 1e-3
+    dinalar_weight: float = 1e-2
 
-    save_encoder_path: Optional[Path] = None
+    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder-70m.pt"
 
     @property
     def target_generation_len_toks(self):
@@ -80,13 +80,13 @@ cfg = Config()
 
 @dataclass
 class EncoderConfig:
-    n_layers: int = 4
-    n_heads: int = 4
-    d_model: int = 128
-    d_head: int = 32
-    d_mlp: int = 512
+    n_layers: int = 6
+    n_heads: int = 8
+    d_model: int = 512
+    d_head: int = 64
+    d_mlp: int = 2048
 
-    lr: float = 5e-4
+    lr: float = 2e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.99)
 

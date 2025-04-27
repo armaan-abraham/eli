@@ -13,26 +13,24 @@ from eli.data import DataCollector
 from eli.utils import calculate_gini, log_decoded_tokens, print_gpu_memory_usage_fn
 
 # Constants for prompts
-PROMPT_PREFIX = """<|start_header_id|>system<|end_header_id|>
+PROMPT_PREFIX = """<|start_header_id|>system<|end_header_id|>You work as part
+of an LLM mechanistic interpretability pipeline. You are an expert at predicting
+what another LLM will say next, given a description of what that LLM is
+currently thinking.
 
-You work as part of an LLM mechanistic interpretability pipeline. You are an
-expert at predicting what another LLM will say next, given a description of what
-that LLM is currently thinking.
-
-<|start_header_id|>user<|end_header_id|>
-Predict what the following LLM will say next, given this description of what it is currently thinking: \""""
+<|start_header_id|>user<|end_header_id|>Predict what the following LLM will say
+next, given this description of what it is currently thinking: \""""
 
 PROMPT_SUFFIX = """\". Provide your prediction and nothing else.
-<|start_header_id|>assistant<|end_header_id|>
-"""
 
-PROMPT_PREFIX_CONTROL = """<|start_header_id|>system<|end_header_id|>
+<|start_header_id|>assistant<|end_header_id|>"""
 
-You work as part of an LLM mechanistic interpretability pipeline. You are an
-expert at predicting what another LLM will say next.
+PROMPT_PREFIX_CONTROL = """<|start_header_id|>system<|end_header_id|>You work as
+part of an LLM mechanistic interpretability pipeline. You are an expert at
+predicting what another LLM will say next.
 
-<|start_header_id|>user<|end_header_id|>
-Predict what the following LLM will say next. Provide your prediction and nothing else.
+<|start_header_id|>user<|end_header_id|>Predict what the following LLM will say
+next. Provide your prediction and nothing else.
 
 <|start_header_id|>assistant<|end_header_id|>"""
 

@@ -18,6 +18,7 @@ from jaxtyping import Int
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, cfg
+from eli.utils import print_gpu_memory_usage_fn
 
 # Setup directories
 this_dir = Path(__file__).parent
@@ -303,10 +304,6 @@ def process_data_chunk(
             ).to(device)
         )
 
-    # Reset memory stats before starting
-    if device.type == "cuda":
-        torch.cuda.reset_peak_memory_stats(device)
-
     logging.info(f"Processing chunk {chunk_start}:{chunk_end} on {device}")
 
     # Process the chunk in batches
@@ -328,16 +325,6 @@ def process_data_chunk(
             target_generated_tokens,
             cfg,
             device,
-        )
-
-    # Log memory stats for the whole chunk
-    if device.type == "cuda":
-        max_allocated = torch.cuda.max_memory_allocated(device) / (1024**3)  # GB
-        max_reserved = torch.cuda.max_memory_reserved(device) / (1024**3)  # GB
-        logging.info(
-            f"CHUNK {chunk_start}:{chunk_end} COMPLETED, "
-            f"Max GPU memory allocated: {max_allocated:.2f} GB, "
-            f"Max GPU memory reserved: {max_reserved:.2f} GB"
         )
 
     # Clean up models if we loaded them
@@ -368,6 +355,12 @@ def worker_process(
         input_tokens, target_acts, target_generated_tokens: Shared tensors
     """
     try:
+        print("proc_idx", proc_idx, "setting CUDA_VISIBLE_DEVICES", device)
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(proc_idx)
+        # Now that we set the visible device, we no longer reference it with an
+        # ordinal
+        device = torch.device("cuda")
+
         # Load models in the worker process
         tokenizer = load_tokenizer()
         target_model = AutoModelForCausalLM.from_pretrained(cfg.target_model_name).to(
@@ -375,7 +368,9 @@ def worker_process(
         )
         target_model_act_collection = (
             transformer_lens.HookedTransformer.from_pretrained(
-                cfg.target_model_name
+                cfg.target_model_name,
+                device=CPU,
+                n_devices=1,
             ).to(CPU)
         )
 
@@ -387,14 +382,13 @@ def worker_process(
             if chunk_range is None:  # Sentinel value to stop
                 break
 
+            torch.cuda.reset_peak_memory_stats()
+
             # Move models to device for processing
             target_model.to(device)
             target_model_act_collection.to(device)
 
             chunk_start, chunk_end = chunk_range
-            logging.info(
-                f"Worker {proc_idx} processing chunk {chunk_start}:{chunk_end}"
-            )
 
             # Process the chunk using the helper function
             process_data_chunk(
@@ -415,6 +409,14 @@ def worker_process(
             target_model_act_collection.to(CPU)
             if device.type == "cuda":
                 torch.cuda.empty_cache()
+
+            max_allocated = torch.cuda.max_memory_allocated() / (1024**3)  # GB
+            max_reserved = torch.cuda.max_memory_reserved() / (1024**3)  # GB
+            logging.info(
+                f"Worker {proc_idx} processed chunk {chunk_start}:{chunk_end}, "
+                f"Max GPU memory allocated: {max_allocated:.2f} GB, "
+                f"Max GPU memory reserved: {max_reserved:.2f} GB"
+            )
 
             # Notify completion of the chunk
             result_queue.put(("success", chunk_start, chunk_end))
