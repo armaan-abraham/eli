@@ -3,6 +3,7 @@ import gc
 import torch
 from einops import einsum
 from jaxtyping import Float, Int
+from networkx import hits
 from torch import Tensor
 from torch.amp import GradScaler
 from torch.nn import init
@@ -12,27 +13,57 @@ from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
 from eli.utils import calculate_gini, log_decoded_tokens, print_gpu_memory_usage_fn
 
-# Constants for prompts
-PROMPT_PREFIX = """<|start_header_id|>system<|end_header_id|>You work as part
-of an LLM mechanistic interpretability pipeline. You are an expert at predicting
-what another LLM will say next, given a description of what that LLM is
-currently thinking.
+PROMPT_DECODER = """## role:system
+You predict what a target LLM will write next, given a short note of its current thought process.
+Return only the predicted text — no commentary, no tags.
 
-<|start_header_id|>user<|end_header_id|>Predict what the following LLM will say
-next, given this description of what it is currently thinking: \""""
+## role:example
+THOUGHT:
+End sentence quantum entanglement definition needed finish now
+OUTPUT:
+where two or more particles share a linked quantum state such that measuring one instantly sets the state of the other, no matter how far apart they are in space.
 
-PROMPT_SUFFIX = """\". Provide your prediction and nothing else.
+## role:example
+THOUGHT:
+Write body fib function recursive return logic included
+OUTPUT:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
 
-<|start_header_id|>assistant<|end_header_id|>"""
+## role:example
+THOUGHT:
+Craft headline AMD RDNA4 GPU launch coverage today
+OUTPUT:
+AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
 
-PROMPT_PREFIX_CONTROL = """<|start_header_id|>system<|end_header_id|>You work as
-part of an LLM mechanistic interpretability pipeline. You are an expert at
-predicting what another LLM will say next.
+## role:test
+THOUGHT:
+<thought>
+OUTPUT:
+"""
 
-<|start_header_id|>user<|end_header_id|>Predict what the following LLM will say
-next. Provide your prediction and nothing else.
+PROMPT_CONTROL = """## role:system
+You predict what a target LLM will write next.
+Return only the predicted text — no commentary, no tags.
 
-<|start_header_id|>assistant<|end_header_id|>"""
+## role:example
+OUTPUT:
+where two or more particles share a linked quantum state such that measuring one instantly sets the state of the other, no matter how far apart they are in space.
+
+## role:example
+OUTPUT:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+## role:example
+OUTPUT:
+AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
+
+## role:test
+OUTPUT:
+"""
 
 
 def prepend_bos_token(toks: Int[Tensor, "batch tok"], tokenizer: AutoTokenizer):
@@ -442,11 +473,12 @@ class EncoderDecoder(torch.nn.Module):
         device = target_generated_tokens.device
 
         # Generate tokens for prompt components
+        prompt_prefix, prompt_suffix = PROMPT_DECODER.split("<thought>")
         prefix_tokens = self.tokenizer(
-            PROMPT_PREFIX, return_tensors="pt", add_special_tokens=False
+            prompt_prefix, return_tensors="pt", add_special_tokens=False
         ).input_ids.to(device)
         suffix_start_tokens = self.tokenizer(
-            PROMPT_SUFFIX, return_tensors="pt", add_special_tokens=False
+            prompt_suffix, return_tensors="pt", add_special_tokens=False
         ).input_ids.to(device)
 
         # Repeat for batch size
@@ -522,45 +554,6 @@ class EncoderDecoder(torch.nn.Module):
         )
 
 
-def kl_div(
-    proposed_logits: Float[Tensor, "batch tok vocab"],
-    target_logits: Float[Tensor, "batch tok vocab"],
-):
-    """Calculate KL divergence between two sets of logits.
-
-    Args:
-        proposed_logits: Logits from the proposed model
-        target_logits: Logits from the target model
-
-    Returns:
-        KL divergence value
-    """
-    if proposed_logits.shape != target_logits.shape:
-        raise ValueError(
-            f"Proposed logits shape: {proposed_logits.shape}, Target logits shape: {target_logits.shape}"
-        )
-
-    if proposed_logits.ndim != 3:
-        raise ValueError(f"Expected 3D logits, got shape {proposed_logits.shape}")
-
-    proposed_logits = proposed_logits.float()
-    target_logits = target_logits.float()
-
-    # Add small epsilon to prevent numerical issues
-    proposed_probs = torch.nn.functional.softmax(proposed_logits, dim=-1) + 1e-8
-    target_probs = torch.nn.functional.softmax(target_logits, dim=-1) + 1e-8
-
-    # Calculate KL divergence
-    kl = torch.nn.functional.kl_div(
-        torch.log(proposed_probs),
-        target_probs,
-        reduction="sum",
-        log_target=False,
-    ) / (proposed_logits.shape[0] * proposed_logits.shape[1])
-
-    return kl
-
-
 def calculate_dinalar_loss(
     decoder_logits_encoding_tokens: Float[Tensor, "batch tok vocab"],
     encoder_output_logits: Float[Tensor, "batch tok vocab"],
@@ -575,9 +568,11 @@ def calculate_dinalar_loss(
         Dinalar loss
     """
     # Compute cross entropy loss between top prediction of decoder and decoder outputs
-    decoder_top_preds = torch.argmax(decoder_logits_encoding_tokens, dim=-1)  # [batch tok]
+    decoder_top_preds = torch.argmax(
+        decoder_logits_encoding_tokens, dim=-1
+    )  # [batch tok]
     loss = torch.nn.functional.cross_entropy(
-        encoder_output_logits.permute(0, 2, 1), # [batch vocab tok]
+        encoder_output_logits.permute(0, 2, 1),  # [batch vocab tok]
         decoder_top_preds.long(),
         reduction="mean",
     )
@@ -681,7 +676,9 @@ class EncoderTrainer:
                 decoder_logits_encoding_tokens,
                 virtual_embeddings,
                 encoder_output_logits,
-            ) = encoder_decoder(target_acts, target_generated_tokens, train_iter=train_iter)
+            ) = encoder_decoder(
+                target_acts, target_generated_tokens, train_iter=train_iter
+            )
 
             # Compute KL loss between decoder predictions and target generations
             target_prediction_loss = calculate_target_prediction_loss(
@@ -845,7 +842,7 @@ class EncoderTrainer:
         with torch.autocast(device_type=self.cfg.device.type, dtype=self.cfg.dtype):
             # Create input tokens with control prompt
             prefix_tokens = self.tokenizer(
-                PROMPT_PREFIX_CONTROL, return_tensors="pt", add_special_tokens=False
+                PROMPT_CONTROL, return_tensors="pt", add_special_tokens=False
             ).input_ids.to(tokens.device)
             prefix_tokens = prefix_tokens.repeat(tokens.shape[0], 1)
             prefix_tokens = prepend_bos_token(prefix_tokens, self.tokenizer)
@@ -868,9 +865,7 @@ class EncoderTrainer:
                     input_ids=input_tokens
                 ).logits[:, -self.cfg.decoder_pred_len_toks - 1 : -1, :]
                 # Calculate KL loss
-                loss = calculate_target_prediction_loss(
-                    decoder_logits, tokens
-                )
+                loss = calculate_target_prediction_loss(decoder_logits, tokens)
 
         return loss.item()
 
