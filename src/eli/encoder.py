@@ -368,6 +368,7 @@ class EncoderDecoder(torch.nn.Module):
         self,
         target_acts: Float[Tensor, "batch d_model"],
         target_generated_tokens: Int[Tensor, "batch tok"],
+        encoder_output_logits: Float[Tensor, "batch tok vocab"] | None = None,
         train_iter: int = -1,
     ):
         """Forward pass for encoder-decoder.
@@ -381,7 +382,9 @@ class EncoderDecoder(torch.nn.Module):
             Tuple of (decoder logits for target tokens, decoder logits for encoding tokens, virtual embeddings)
         """
         # Generate virtual embeddings with the encoder
-        encoder_output_logits = self.encoder(target_acts)  # [batch tok vocab]
+        if encoder_output_logits is None:
+            encoder_output_logits = self.encoder(target_acts)  # [batch tok vocab]
+
         encoder_output_probs = torch.nn.functional.softmax(
             encoder_output_logits, dim=-1
         )
@@ -680,7 +683,7 @@ class EncoderTrainer:
                 decoder_logits_encoding_tokens,
                 virtual_embeddings,
                 encoder_output_logits,
-            ) = encoder_decoder(target_acts, target_generated_tokens, train_iter)
+            ) = encoder_decoder(target_acts, target_generated_tokens, train_iter=train_iter)
 
             # Compute KL loss between decoder predictions and target generations
             target_prediction_loss = calculate_target_prediction_loss(
