@@ -33,10 +33,11 @@ class Config:
     dataset_column_name: str = "text"
     dataset_batch_size_entries: int = 20
 
-    target_model_name: str = "EleutherAI/pythia-70m"
-    decoder_model_name: str = "EleutherAI/pythia-70m"
+    target_model_name: str = "EleutherAI/pythia-31m"
+    decoder_model_name: str = "EleutherAI/pythia-31m"
     vocab_size_target: int = 50304
     vocab_size_decoder: int = 50304
+    target_acts_collect_len_toks: int = 1
     target_ctx_len_toks: int = 64
     decoder_pred_len_toks: int = 32
     encoding_len_toks: int = 8
@@ -47,8 +48,8 @@ class Config:
 
     buffer_size_samples: int = 65536
 
-    target_model_act_dim: int = 512
-    decoder_model_embed_dim: int = 512
+    target_model_act_dim: int = 256
+    decoder_model_embed_dim: int = 256
 
     device: torch.device = torch.device("cuda")
     dtype: torch.dtype = dtypes["float16"]
@@ -56,9 +57,9 @@ class Config:
     site: str = "resid_pre"
     layer: int = 4
 
-    dinalar_weight: float = 1e-2
+    dinalar_weight: float = 0
 
-    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder-70m.pt"
+    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder-31m.pt"
 
     @property
     def target_generation_len_toks(self):
@@ -73,6 +74,10 @@ class Config:
         return (
             self.num_train_samples + self.buffer_size_samples - 1
         ) // self.buffer_size_samples
+
+    @property
+    def target_model_agg_acts_dim(self):
+        return self.target_model_act_dim * self.target_acts_collect_len_toks
 
 
 cfg = Config()

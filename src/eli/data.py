@@ -243,8 +243,10 @@ def _process_batch(
             return_cache_object=True,
         )
 
+        print(cache.cache_dict[cfg.act_name].shape)
+
         # Get activations and move to shared memory
-        acts = cache.cache_dict[cfg.act_name][:, -1, :]
+        acts = cache.cache_dict[cfg.act_name][:, -1, :] # [batch tok d_model]
         target_acts[batch_start:batch_end] = acts.cpu()
 
         # Generate tokens
@@ -515,7 +517,7 @@ class DataCollector:
         )
         target_acts_size = (
             self.cfg.buffer_size_samples
-            * self.cfg.target_model_act_dim
+            * self.cfg.target_model_agg_acts_dim
             * 4  # float32 = 4 bytes
         )
         input_tokens_size = (
@@ -550,7 +552,7 @@ class DataCollector:
         ).share_memory_()
 
         self.target_acts = torch.zeros(
-            (self.cfg.buffer_size_samples, self.cfg.target_model_act_dim),
+            (self.cfg.buffer_size_samples, self.cfg.target_model_agg_acts_dim),
             dtype=torch.float32,
             device=CPU,
         ).share_memory_()
