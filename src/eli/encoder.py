@@ -314,14 +314,14 @@ class Encoder(torch.nn.Module):
 
     def forward(
         self, x: Float[Tensor, "batch d_in"]
-    ) -> Float[Tensor, "batch tok d_out"]:
+    ) -> Float[Tensor, "batch tok vocab"]:
         """Forward pass for encoder.
 
         Args:
             x: Input tensor with shape [batch, d_in]
 
         Returns:
-            Output tensor with shape [batch, token, d_out]
+            Output tensor with shape [batch, tok, vocab]
         """
         # Apply multiplex heads to create a sequence of tokens
         x_toks = torch.stack(
@@ -344,7 +344,7 @@ class Encoder(torch.nn.Module):
         # Apply output heads to each token
         x_out = torch.stack(
             [head(x_toks[:, i, :]) for i, head in enumerate(self.output_heads)], dim=1
-        )
+        ) / 1e1
 
         assert (
             x_out.shape
