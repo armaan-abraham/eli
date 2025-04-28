@@ -567,6 +567,10 @@ def calculate_dinalar_loss(
     Returns:
         Dinalar loss
     """
+    # Skip the first token
+    decoder_logits_encoding_tokens = decoder_logits_encoding_tokens[:, 1:, :]
+    encoder_output_logits = encoder_output_logits[:, 1:, :]
+
     # Compute cross entropy loss between top prediction of decoder and decoder outputs
     decoder_top_preds = torch.argmax(
         decoder_logits_encoding_tokens, dim=-1
