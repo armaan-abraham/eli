@@ -243,11 +243,10 @@ def _process_batch(
             return_cache_object=True,
         )
 
-        print(cache.cache_dict[cfg.act_name].shape)
-
         # Get activations and move to shared memory
-        acts = cache.cache_dict[cfg.act_name][:, -1, :] # [batch tok d_model]
-        target_acts[batch_start:batch_end] = acts.cpu()
+        acts = cache.cache_dict[cfg.act_name][:, -cfg.target_acts_collect_len_toks:, :] # [batch tok d_model]
+        acts_cat = einops.rearrange(acts, "batch tok d_model -> batch (tok d_model)")
+        target_acts[batch_start:batch_end] = acts_cat.cpu()
 
         # Generate tokens
         length_toks = cfg.target_ctx_len_toks + cfg.target_generation_len_toks

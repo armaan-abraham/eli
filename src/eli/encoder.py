@@ -14,55 +14,52 @@ from eli.data import DataCollector
 from eli.utils import calculate_gini, log_decoded_tokens, print_gpu_memory_usage_fn
 
 PROMPT_DECODER = """## role:system
-You predict what a target LLM will write next, given a short note of its current thought process.
-Return only the predicted text — no commentary, no tags.
+You are going to follow the instructions EXACTLY. Your task is simply to repeat
+the given text. No commentary, no tags. Shown below are examples. You will be
+given some text, labeled "GIVEN TEXT", and you will need to repeat it exactly.
 
 ## role:example
-THOUGHT:
-End sentence quantum entanglement definition needed finish now
-OUTPUT:
-where two or more particles share a linked quantum state such that measuring one instantly sets the state of the other, no matter how far apart they are in space.
+GIVEN TEXT:
+Alice
+ANSWER:
+Alice
 
 ## role:example
-THOUGHT:
-Write body fib function recursive return logic included
-OUTPUT:
-    if n < 2:
-        return n
-    return fib(n - 1) + fib(n - 2)
+GIVEN TEXT:
+nucleus
+ANSWER:
+nucleus
 
 ## role:example
-THOUGHT:
-Craft headline AMD RDNA4 GPU launch coverage today
-OUTPUT:
-AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
+GIVEN TEXT:
+..**<
+ANSWER:
+..**<
 
 ## role:test
-THOUGHT:
+GIVEN TEXT:
 <thought>
-OUTPUT:
+ANSWER:
 """
 
 PROMPT_CONTROL = """## role:system
-You predict what a target LLM will write next.
-Return only the predicted text — no commentary, no tags.
+You are going to follow the instructions EXACTLY. Your task is simply to say a
+random word. No commentary, no tags. Shown below are examples.
 
 ## role:example
-OUTPUT:
-where two or more particles share a linked quantum state such that measuring one instantly sets the state of the other, no matter how far apart they are in space.
+ANSWER:
+Alice
 
 ## role:example
-OUTPUT:
-    if n < 2:
-        return n
-    return fib(n - 1) + fib(n - 2)
+ANSWER:
+nucleus
 
 ## role:example
-OUTPUT:
-AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
+ANSWER:
+the
 
 ## role:test
-OUTPUT:
+ANSWER:
 """
 
 
@@ -325,7 +322,7 @@ class Encoder(torch.nn.Module):
         """
         # Apply multiplex heads to create a sequence of tokens
         x_toks = torch.stack(
-            [head(x) for head in self.multiplex_heads], dim=1
+            [head(x) + x for head in self.multiplex_heads], dim=1
         )  # [batch tok d_model]
 
         assert (
@@ -412,7 +409,7 @@ class EncoderDecoder(torch.nn.Module):
         """
         # Generate virtual embeddings with the encoder
         # if encoder_output_logits is None:
-        virtual_embeddings = self.encoder(target_acts)  # [batch tok d_embed]
+        # encoder_output_logits = self.encoder(target_acts)  # [batch tok d_embed]
         # encoder_output_probs = torch.nn.functional.softmax(
         #     encoder_output_logits, dim=-1
         # )
@@ -422,6 +419,9 @@ class EncoderDecoder(torch.nn.Module):
         #     embeddings,
         #     "batch tok vocab, vocab d_embed -> batch tok d_embed",
         # )
+        virtual_embeddings_enc = self.encoder(target_acts)  # [batch tok d_embed]
+
+        virtual_embeddings = target_acts[:, None, :]
 
         # Assemble input embeddings for the decoder
         decoder_context_embeddings, attention_mask, fixed_token_lens = (
@@ -449,7 +449,7 @@ class EncoderDecoder(torch.nn.Module):
         return (
             decoder_logits_target_tokens,
             decoder_logits_encoding_tokens,
-            virtual_embeddings,
+            virtual_embeddings_enc,
             # encoder_output_logits,
         )
 
@@ -634,9 +634,13 @@ class EncoderTrainer:
         # Move model to device
         self.encoder_decoder.to(self.cfg.device)
 
+        for param in self.encoder_decoder.parameters():
+            if param.requires_grad:
+                print(param)
+
         # Set up optimizer
         self.optimizer = torch.optim.AdamW(
-            self.encoder_decoder.parameters(),
+            [param for param in self.encoder_decoder.parameters() if param.requires_grad],
             lr=encoder_cfg.lr,
             betas=encoder_cfg.betas,
             weight_decay=encoder_cfg.weight_decay,
@@ -689,7 +693,8 @@ class EncoderTrainer:
             )
 
             # Initialize total loss with prediction loss
-            loss = target_prediction_loss
+            loss = 0
+            loss += target_prediction_loss
 
             # Calculate Direct Natural Language Regularization (dinalar) if enabled
             # dinalar_loss = calculate_dinalar_loss(
@@ -701,6 +706,9 @@ class EncoderTrainer:
             # Add dinalar loss if weight is positive
             if cfg.dinalar_weight > 0:
                 loss += cfg.dinalar_weight * dinalar_loss
+
+
+            loss += (virtual_embeddings - torch.randn_like(virtual_embeddings)).pow(2).mean() * 1e9
 
             return (
                 loss,
@@ -802,7 +810,6 @@ class EncoderTrainer:
                 target_prediction_loss,
                 dinalar_loss,
                 grad_stats,
-                # encoder_output_logits,
             )
             gc.collect()
             torch.cuda.empty_cache()
@@ -818,7 +825,9 @@ class EncoderTrainer:
             )
 
         # Add per-buffer metrics
-        results["encoder_output_logits_gini"] = torch.tensor(1)
+        # results["encoder_output_logits_gini"] = calculate_gini(
+        #     encoder_output_logits_last
+        # )
 
         return results
 
