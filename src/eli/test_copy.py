@@ -4,7 +4,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import transformer_lens
 from eli.encoder import Encoder, EncoderDecoder, calculate_target_prediction_loss
-
+from einops import einsum
 # %%
 tokenizer = AutoTokenizer.from_pretrained("EleutherAI/pythia-70m")
 
@@ -96,4 +96,35 @@ embeddings_control = encoder_decoder.decoder.get_input_embeddings()(tokens)
 
 print(embeddings_control.shape)
 print(decoder_context_embeddings.shape)
+
 # %%
+
+model_lens = transformer_lens.HookedTransformer.from_pretrained("EleutherAI/pythia-70m")
+
+output, cache = model_lens.run_with_cache(tokens, return_cache_object=True)
+
+
+print(cache["normalized"])
+
+
+acts = cache["normalized"][:, -1, :]
+
+print(acts.shape)
+
+logits = einsum(acts, model_lens.W_U, "batch d_model, d_model vocab -> batch vocab") + model_lens.b_U
+
+print(logits.shape)
+
+print(torch.allclose(logits, output[:, -1, :]))
+
+print(logits[0, :5])
+
+print(output[0, -1, :5])
+
+
+# %%
+
+
+
+
+
