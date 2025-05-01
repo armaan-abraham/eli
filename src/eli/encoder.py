@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.amp import GradScaler
 from torch.nn import init
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
+import transformer_lens
 from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
 from eli.utils import calculate_gini, log_decoded_tokens, print_gpu_memory_usage_fn
@@ -381,6 +381,10 @@ class EncoderDecoder(torch.nn.Module):
         self.decoder = AutoModelForCausalLM.from_pretrained(cfg.decoder_model_name).to(
             CPU
         )
+        self.target_lens = transformer_lens.HookedTransformer.from_pretrained(cfg.target_model_name)
+
+        for param in self.target_lens.parameters():
+            param.requires_grad = False
 
         # Freeze the decoder parameters
         for param in self.decoder.parameters():
@@ -419,12 +423,21 @@ class EncoderDecoder(torch.nn.Module):
         #     embeddings,
         #     "batch tok vocab, vocab d_embed -> batch tok d_embed",
         # )
-        virtual_embeddings = self.encoder(target_acts)  # [batch tok d_embed]
+        virtual_embeddings_enc = self.encoder(target_acts)  # [batch tok d_embed]
+
+        # target_output_logits = einsum(target_acts, self.target_lens.W_U, "batch d_model, d_model vocab -> batch vocab") + self.target_lens.b_U
+        # target_output_probs = torch.nn.functional.softmax(target_output_logits, dim=-1)
+        # embeddings = get_embeddings_from_decoder(self.decoder).weight  # [vocab d_embed]
+        # virtual_embeddings = einsum(target_output_probs, embeddings, "batch vocab, vocab d_embed -> batch d_embed")
+        # virtual_embeddings = virtual_embeddings[:, None, :]
+
+        embeddings = get_embeddings_from_decoder(self.decoder)
+        target_token_embeddings = embeddings(target_generated_tokens)
 
         # Assemble input embeddings for the decoder
         decoder_context_embeddings, attention_mask, fixed_token_lens = (
             self.assemble_decoder_context_embeddings(
-                target_generated_tokens, virtual_embeddings, train_iter
+                target_generated_tokens, target_token_embeddings, train_iter
             )
         )
 
@@ -447,7 +460,7 @@ class EncoderDecoder(torch.nn.Module):
         return (
             decoder_logits_target_tokens,
             decoder_logits_encoding_tokens,
-            virtual_embeddings,
+            virtual_embeddings_enc,
             # encoder_output_logits,
         )
 
@@ -700,6 +713,9 @@ class EncoderTrainer:
             #     encoder_output_logits,
             # )
             dinalar_loss = torch.tensor(1)
+
+
+            loss += (virtual_embeddings - torch.randn_like(virtual_embeddings)).pow(2).mean()
 
             # Add dinalar loss if weight is positive
             if cfg.dinalar_weight > 0:

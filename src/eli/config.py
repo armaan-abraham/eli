@@ -44,9 +44,9 @@ class Config:
 
     train_batch_size_samples: int = 1024  # Per GPU
     control_batch_size_samples: int = 1024  # Per GPU
-    target_model_batch_size_samples: int = 4096  # Per GPU
+    target_model_batch_size_samples: int = 2048  # Per GPU
 
-    buffer_size_samples: int = 65536
+    buffer_size_samples: int = 32768
 
     target_model_act_dim: int = 512
     decoder_model_embed_dim: int = 512
