@@ -2,11 +2,13 @@
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
+import transformer_lens
 
 # %%
 
 model = AutoModelForCausalLM.from_pretrained("EleutherAI/pythia-70m")
 tokenizer = AutoTokenizer.from_pretrained("EleutherAI/pythia-70m")
+model_lens = transformer_lens.HookedTransformer.from_pretrained("EleutherAI/pythia-70m")
 
 # %%
     
@@ -44,6 +46,7 @@ GIVEN TEXT:
 Bob
 ANSWER:
 """
+
 
 tokens = tokenizer(prompt, add_special_tokens=True, return_tensors="pt").input_ids
 print_tokens(tokens)

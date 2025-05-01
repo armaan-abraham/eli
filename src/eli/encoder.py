@@ -707,8 +707,7 @@ class EncoderTrainer:
             if cfg.dinalar_weight > 0:
                 loss += cfg.dinalar_weight * dinalar_loss
 
-
-            loss += (virtual_embeddings - torch.randn_like(virtual_embeddings)).pow(2).mean() * 1e9
+            loss += (virtual_embeddings - torch.randn_like(virtual_embeddings)).pow(2).mean()
 
             return (
                 loss,
