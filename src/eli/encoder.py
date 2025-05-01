@@ -419,9 +419,7 @@ class EncoderDecoder(torch.nn.Module):
         #     embeddings,
         #     "batch tok vocab, vocab d_embed -> batch tok d_embed",
         # )
-        virtual_embeddings_enc = self.encoder(target_acts)  # [batch tok d_embed]
-
-        virtual_embeddings = target_acts[:, None, :]
+        virtual_embeddings = self.encoder(target_acts)  # [batch tok d_embed]
 
         # Assemble input embeddings for the decoder
         decoder_context_embeddings, attention_mask, fixed_token_lens = (
@@ -449,7 +447,7 @@ class EncoderDecoder(torch.nn.Module):
         return (
             decoder_logits_target_tokens,
             decoder_logits_encoding_tokens,
-            virtual_embeddings_enc,
+            virtual_embeddings,
             # encoder_output_logits,
         )
 
@@ -706,9 +704,6 @@ class EncoderTrainer:
             # Add dinalar loss if weight is positive
             if cfg.dinalar_weight > 0:
                 loss += cfg.dinalar_weight * dinalar_loss
-
-
-            loss += (virtual_embeddings - torch.randn_like(virtual_embeddings)).pow(2).mean() * 1e9
 
             return (
                 loss,
