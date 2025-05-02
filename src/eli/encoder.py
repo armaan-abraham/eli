@@ -719,6 +719,7 @@ class EncoderTrainer:
         # Initialize results dictionary
         results = {
             "loss": [],
+            "target_prediction_loss": [],
             "grad_norm": [],
             "grad_abs_max": [],
             "grad_abs_min": [],
@@ -765,6 +766,7 @@ class EncoderTrainer:
 
             # Save results for logging
             results["loss"].append(loss.item())
+            results["target_prediction_loss"].append(loss.item())
             results["grad_norm"].append(grad_stats["grad_norm"].item())
             results["grad_abs_max"].append(grad_stats["grad_abs_max"].item())
             results["grad_abs_min"].append(grad_stats["grad_abs_min"].item())
@@ -840,7 +842,7 @@ class EncoderTrainer:
                     input_ids=input_tokens
                 ).logits[:, -self.cfg.decoder_pred_len_toks - 1 : -1, :]
                 # Calculate KL loss
-                loss = calculate_target_prediction_loss(decoder_logits, tokens)
+                loss = calculate_target_prediction_loss(decoder_logits, tokens, self.tokenizer)
 
         return loss.item()
 
