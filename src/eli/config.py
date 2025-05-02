@@ -18,7 +18,7 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 
 @dataclass
 class Config:
-    num_train_samples: int = int(1e7)
+    num_train_samples: int = int(2e7)
 
     seed: int = 42
 
@@ -85,11 +85,11 @@ cfg = Config()
 
 @dataclass
 class EncoderConfig:
-    n_layers: int = 1
-    n_heads: int = 1
+    n_layers: int = 2
+    n_heads: int = 4
     d_model: int = 512
-    d_head: int = 32
-    d_mlp: int = 512
+    d_head: int = 64
+    d_mlp: int = 2048
 
     lr: float = 1e-4
     weight_decay: float = 1e-2
