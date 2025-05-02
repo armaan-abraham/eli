@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
-from eli.utils import calculate_gini, log_decoded_tokens, print_gpu_memory_usage_fn
+from eli.utils import calculate_logits_gini, log_decoded_tokens, print_gpu_memory_usage_fn
 
 PROMPT_DECODER = """## role:system
 You are going to follow the instructions EXACTLY. Your task is simply to REPEAT
@@ -303,7 +303,7 @@ class Encoder(torch.nn.Module):
         # Output heads convert transformer outputs to decoder embeddings
         self.output_heads = torch.nn.ModuleList(
             [
-                torch.nn.Linear(encoder_cfg.d_model, cfg.decoder_model_embed_dim)
+                torch.nn.Linear(encoder_cfg.d_model, cfg.vocab_size_decoder)
                 for _ in range(cfg.encoding_len_toks)
             ]
         )
@@ -349,16 +349,16 @@ class Encoder(torch.nn.Module):
         # Apply output heads to each token
         x_out = torch.stack(
             [head(x_toks[:, i, :]) for i, head in enumerate(self.output_heads)], dim=1
-        )
+        ) / 1e2
 
         assert (
             x_out.shape
             == (
                 x.shape[0],
                 self.cfg.encoding_len_toks,
-                self.cfg.decoder_model_embed_dim,
+                self.cfg.vocab_size_decoder,
             )
-        ), f"Expected shape {(x.shape[0], self.cfg.encoding_len_toks, self.cfg.decoder_model_embed_dim)}, got {x_out.shape}"
+        ), f"Expected shape {(x.shape[0], self.cfg.encoding_len_toks, self.cfg.vocab_size_decoder)}, got {x_out.shape}"
 
         return x_out
 
@@ -417,7 +417,16 @@ class EncoderDecoder(torch.nn.Module):
             Tuple of (decoder logits for target tokens, decoder logits for encoding tokens, virtual embeddings)
         """
         # Generate virtual embeddings with the encoder
-        virtual_embeddings = self.encoder(target_acts)  # [batch tok d_embed]
+        encoder_output_logits = self.encoder(target_acts)  # [batch tok d_embed]
+        encoder_output_probs = torch.nn.functional.softmax(
+            encoder_output_logits, dim=-1
+        )
+        embeddings = get_embeddings_from_decoder(self.decoder).weight  # [vocab d_embed]
+        virtual_embeddings = einsum(
+            encoder_output_probs,
+            embeddings,
+            "batch tok vocab, vocab d_embed -> batch tok d_embed",
+        )
 
         # Assemble input embeddings for the decoder
         decoder_context_embeddings, attention_mask, fixed_token_lens = (
@@ -446,7 +455,7 @@ class EncoderDecoder(torch.nn.Module):
             decoder_logits_target_tokens,
             decoder_logits_encoding_tokens,
             virtual_embeddings,
-            # encoder_output_logits,
+            encoder_output_logits,
         )
 
     def assemble_decoder_context_embeddings(
@@ -665,7 +674,7 @@ class EncoderTrainer:
                 decoder_logits_target_tokens,
                 decoder_logits_encoding_tokens,
                 virtual_embeddings,
-                # encoder_output_logits,
+                encoder_output_logits,
             ) = encoder_decoder(
                 target_acts,
                 target_generated_tokens,
@@ -678,7 +687,7 @@ class EncoderTrainer:
                 decoder_logits_target_tokens, target_generated_tokens, tokenizer
             )
 
-            return target_prediction_loss
+            return target_prediction_loss, encoder_output_logits
 
     @print_gpu_memory_usage_fn
     def train(self, data_collector: DataCollector, train_iter: int = -1):
@@ -742,7 +751,7 @@ class EncoderTrainer:
             self.optimizer.zero_grad()
 
             # Calculate loss
-            loss = self.loss(
+            loss, encoder_output_logits = self.loss(
                 self.cfg,
                 self.encoder_decoder,
                 batch_tokens,
@@ -751,6 +760,9 @@ class EncoderTrainer:
                 self.tokenizer,
                 train_iter,
             )
+
+            if batch_idx == num_batches - 1:
+                encoder_output_logits_last = encoder_output_logits
 
             # Backward pass with gradient scaling
             self.scaler.scale(loss).backward()
@@ -794,6 +806,10 @@ class EncoderTrainer:
             raise ValueError(
                 f"All result lists should have the same length, got {lens}"
             )
+
+        results["encoder_output_logits_gini"] = calculate_logits_gini(
+            encoder_output_logits_last
+        )
 
         return results
 

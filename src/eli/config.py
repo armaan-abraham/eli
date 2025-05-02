@@ -33,33 +33,33 @@ class Config:
     dataset_column_name: str = "text"
     dataset_batch_size_entries: int = 20
 
-    target_model_name: str = "EleutherAI/pythia-14m"
-    decoder_model_name: str = "EleutherAI/pythia-14m"
-    vocab_size_target: int = 50304
-    vocab_size_decoder: int = 50304
+    target_model_name: str = "gpt2"
+    decoder_model_name: str = "gpt2"
+    vocab_size_target: int = 50257
+    vocab_size_decoder: int = 50257
     target_acts_collect_len_toks: int = 1
     target_ctx_len_toks: int = 64
     decoder_pred_len_toks: int = 1
     encoding_len_toks: int = 1
 
-    train_batch_size_samples: int = 1024  # Per GPU
-    control_batch_size_samples: int = 1024  # Per GPU
-    target_model_batch_size_samples: int = 2048  # Per GPU
+    train_batch_size_samples: int = 256  # Per GPU
+    control_batch_size_samples: int = 256  # Per GPU
+    target_model_batch_size_samples: int = 1024  # Per GPU
 
     buffer_size_samples: int = 32768
 
-    target_model_act_dim: int = 128
-    decoder_model_embed_dim: int = 128
+    target_model_act_dim: int = 768
+    decoder_model_embed_dim: int = 768
 
     device: torch.device = torch.device("cuda")
     dtype: torch.dtype = dtypes["float16"]
 
     site: str = "resid_post"
-    layer: int = 5
+    layer: int = 11
 
     dinalar_weight: float = 0
 
-    save_encoder_path: Optional[Path] = None
+    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
 
     @property
     def target_generation_len_toks(self):
