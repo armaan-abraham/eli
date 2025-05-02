@@ -14,9 +14,11 @@ from eli.data import DataCollector
 from eli.utils import calculate_gini, log_decoded_tokens, print_gpu_memory_usage_fn
 
 PROMPT_DECODER = """## role:system
-You are going to follow the instructions EXACTLY. Your task is simply to repeat
-the given text. No commentary, no tags. Shown below are examples. You will be
+You are going to follow the instructions EXACTLY. Your task is simply to REPEAT
+THE GIVEN TEXT. No commentary, no tags. Shown below are examples. You will be
 given some text, labeled "GIVEN TEXT", and you will need to repeat it exactly.
+If the given text includes spaces or special characters, you will need to repeat
+them exactly, including leading and trailing spaces.
 
 ## role:example
 GIVEN TEXT:
@@ -32,9 +34,15 @@ nucleus
 
 ## role:example
 GIVEN TEXT:
-..**<
+ ..**<
 ANSWER:
-..**<
+ ..**<
+
+## role:example
+GIVEN TEXT:
+cular
+ANSWER:
+cular
 
 ## role:test
 GIVEN TEXT:
