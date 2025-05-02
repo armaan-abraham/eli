@@ -330,7 +330,7 @@ class Encoder(torch.nn.Module):
         """
         # Apply multiplex heads to create a sequence of tokens
         x_toks = torch.stack(
-            [head(x) + x for head in self.multiplex_heads], dim=1
+            [head(x) for head in self.multiplex_heads], dim=1
         )  # [batch tok d_model]
 
         assert (
@@ -522,16 +522,18 @@ class EncoderDecoder(torch.nn.Module):
 
         # Create attention mask (all 1s since we're not using padding)
         attention_mask = torch.cat(
-            torch.ones(
-                combined_embeds.shape[0],
-                (
-                    prefix_tokens.shape[1]
-                    + virtual_embeddings.shape[1]
-                    + suffix_start_tokens.shape[1]
+            (
+                torch.ones(
+                    combined_embeds.shape[0],
+                    (
+                        prefix_tokens.shape[1]
+                        + virtual_embeddings.shape[1]
+                        + suffix_start_tokens.shape[1]
+                    ),
+                    device=combined_embeds.device,
                 ),
-                device=combined_embeds.device,
+                attention_mask,
             ),
-            attention_mask,
             dim=1,
         )
 
@@ -600,6 +602,7 @@ class EncoderTrainer:
 
         # Initialize tokenizer and model
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.decoder_model_name)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
         self.encoder_decoder = EncoderDecoder(cfg, encoder_cfg, self.tokenizer)
 
         # Set up multi-GPU if available
@@ -611,10 +614,6 @@ class EncoderTrainer:
 
         # Move model to device
         self.encoder_decoder.to(self.cfg.device)
-
-        for param in self.encoder_decoder.parameters():
-            if param.requires_grad:
-                print(param)
 
         # Set up optimizer
         self.optimizer = torch.optim.AdamW(
@@ -709,6 +708,7 @@ class EncoderTrainer:
             decoded, add_special_tokens=False, return_tensors="pt", padding=True
         )
         target_generated_tokens = encoded.input_ids
+        print(f"Target generated tokens shape: {target_generated_tokens.shape}")
         attention_mask = encoded.attention_mask
 
         # Calculate batch information
@@ -719,7 +719,6 @@ class EncoderTrainer:
         # Initialize results dictionary
         results = {
             "loss": [],
-            "target_prediction_loss": [],
             "grad_norm": [],
             "grad_abs_max": [],
             "grad_abs_min": [],
@@ -779,8 +778,6 @@ class EncoderTrainer:
                 batch_tokens,
                 batch_acts,
                 loss,
-                target_prediction_loss,
-                dinalar_loss,
                 grad_stats,
             )
             gc.collect()
