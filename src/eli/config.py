@@ -33,10 +33,10 @@ class Config:
     dataset_column_name: str = "text"
     dataset_batch_size_entries: int = 20
 
-    target_model_name: str = "EleutherAI/pythia-70m"
-    decoder_model_name: str = "EleutherAI/pythia-70m"
-    vocab_size_target: int = 50304
-    vocab_size_decoder: int = 50304
+    target_model_name: str = "gpt2"
+    decoder_model_name: str = "gpt2"
+    vocab_size_target: int = 50257
+    vocab_size_decoder: int = 50257
     target_acts_collect_len_toks: int = 1
     target_ctx_len_toks: int = 64
     decoder_pred_len_toks: int = 1
@@ -48,8 +48,8 @@ class Config:
 
     buffer_size_samples: int = 65536
 
-    target_model_act_dim: int = 512
-    decoder_model_embed_dim: int = 512
+    target_model_act_dim: int = 768
+    decoder_model_embed_dim: int = 768
 
     device: torch.device = torch.device("cuda")
     dtype: torch.dtype = dtypes["float16"]

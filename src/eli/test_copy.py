@@ -5,42 +5,55 @@ import torch
 import transformer_lens
 from eli.encoder import Encoder, EncoderDecoder, calculate_target_prediction_loss
 from einops import einsum
+
 # %%
-tokenizer = AutoTokenizer.from_pretrained("EleutherAI/pythia-70m")
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
 from eli.config import cfg, encoder_cfg
-encoder_decoder = EncoderDecoder(cfg, encoder_cfg, tokenizer)
+encoder_decoder = EncoderDecoder(cfg, encoder_cfg, tokenizer).to("cuda")
 
 # %%
 
-target_generated_tokens = tokenizer("Bob", add_special_tokens=False, return_tensors="pt").input_ids
+def eval(tok):
+    tok = torch.tensor([[tok]])
+    tok = tok.to("cuda")
+    # target_generated_tokens = tokenizer(text, add_special_tokens=False, return_tensors="pt").input_ids
+    # assert target_generated_tokens.shape == (1, 1)
 
-print(target_generated_tokens)
-print(target_generated_tokens.shape)
-print(tokenizer.decode(target_generated_tokens[0]))
+    # print(target_generated_tokens)
+    # print(target_generated_tokens.shape)
+    # print(tokenizer.decode(target_generated_tokens[0]))
+
+    # embedding_text = text
+    # embedding_tokens = tokenizer(embedding_text, add_special_tokens=False, return_tensors="pt").input_ids
+    embeddings = encoder_decoder.decoder.get_input_embeddings()
+    virtual_embeddings = embeddings(tok)
+    # print(virtual_embeddings.shape)
+
+    decoder_context_embeddings, attention_mask, fixed_token_lens = encoder_decoder.assemble_decoder_context_embeddings(
+        tok,
+        virtual_embeddings,
+    )
+
+    decoder_logits = encoder_decoder.decoder(inputs_embeds=decoder_context_embeddings.to("cuda"), attention_mask=attention_mask.to("cuda")).logits
+
+    decoder_logits_target_tokens = decoder_logits[:, -2 : -1]
+
+    loss = calculate_target_prediction_loss(decoder_logits_target_tokens, tok)
+
+    return loss
+
+toks = torch.randint(0, cfg.vocab_size_decoder, (500,))
+
+# losses = [eval(tokenizer.decode(tok)) for tok in toks if not tokenizer.decode(tok).startswith(" ")]
+losses = [eval(tok) for tok in toks]
+
+print(sum(losses) / len(losses))
 
 # %%
 
-embedding_text = "Bob"
-embedding_tokens = tokenizer(embedding_text, add_special_tokens=False, return_tensors="pt").input_ids
-embeddings = encoder_decoder.decoder.get_input_embeddings()
-virtual_embeddings = embeddings(embedding_tokens)
-print(virtual_embeddings.shape)
-
-decoder_context_embeddings, attention_mask, fixed_token_lens = encoder_decoder.assemble_decoder_context_embeddings(
-    target_generated_tokens,
-    virtual_embeddings,
-)
-
-# %%
-
-decoder_logits = encoder_decoder.decoder(inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask).logits
-
-decoder_logits_target_tokens = decoder_logits[:, -target_generated_tokens.shape[1] - 1 : -1]
-
-loss = calculate_target_prediction_loss(decoder_logits_target_tokens, target_generated_tokens)
-
-print(loss)
+for tok, loss in zip(toks, losses):
+    print(tokenizer.decode(tok), round(loss.item(), 2))
 
 # %%
 # Get the logits for the target token "Bob"
