@@ -3,9 +3,9 @@ import os
 from typing import Dict
 
 import torch
-import wandb
 from tqdm import tqdm
 
+import wandb
 from eli.config import CPU, cfg, encoder_cfg
 from eli.data import DataCollector
 from eli.encoder import EncoderTrainer

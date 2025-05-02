@@ -1,18 +1,21 @@
 # %%
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import transformer_lens
-from eli.encoder import Encoder, EncoderDecoder, calculate_target_prediction_loss
 from einops import einsum
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from eli.encoder import Encoder, EncoderDecoder, calculate_target_prediction_loss
 
 # %%
 tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
 from eli.config import cfg, encoder_cfg
+
 encoder_decoder = EncoderDecoder(cfg, encoder_cfg, tokenizer).to("cuda")
 
 # %%
+
 
 def eval(tok):
     tok = torch.tensor([[tok]])
@@ -30,23 +33,29 @@ def eval(tok):
     virtual_embeddings = embeddings(tok)
     # print(virtual_embeddings.shape)
 
-    decoder_context_embeddings, attention_mask, fixed_token_lens = encoder_decoder.assemble_decoder_context_embeddings(
-        tok,
-        virtual_embeddings,
+    decoder_context_embeddings, attention_mask, fixed_token_lens = (
+        encoder_decoder.assemble_decoder_context_embeddings(
+            tok,
+            virtual_embeddings,
+        )
     )
 
-    decoder_logits = encoder_decoder.decoder(inputs_embeds=decoder_context_embeddings.to("cuda"), attention_mask=attention_mask.to("cuda")).logits
+    decoder_logits = encoder_decoder.decoder(
+        inputs_embeds=decoder_context_embeddings.to("cuda"),
+        attention_mask=attention_mask.to("cuda"),
+    ).logits
 
-    decoder_logits_target_tokens = decoder_logits[:, -2 : -1]
+    decoder_logits_target_tokens = decoder_logits[:, -2:-1]
 
     loss = calculate_target_prediction_loss(decoder_logits_target_tokens, tok)
 
     return loss
 
+
 toks = torch.randint(0, cfg.vocab_size_decoder, (500,))
 
 # losses = [eval(tokenizer.decode(tok)) for tok in toks if not tokenizer.decode(tok).startswith(" ")]
-losses = [eval(tok) for tok in toks]
+losses = [eval(tok) for tok in toks if not tokenizer.decode(tok).startswith(" ")]
 
 print(sum(losses) / len(losses))
 
@@ -59,7 +68,9 @@ for tok, loss in zip(toks, losses):
 # Get the logits for the target token "Bob"
 bob_token_id = target_generated_tokens[0, 0].item()
 bob_logit = decoder_logits_target_tokens[0, 0, bob_token_id].item()
-print(f"Token ID: {bob_token_id}, Token: '{tokenizer.decode([bob_token_id])}', Logit: {bob_logit}")
+print(
+    f"Token ID: {bob_token_id}, Token: '{tokenizer.decode([bob_token_id])}', Logit: {bob_logit}"
+)
 
 # Get the top 3 token indices and their corresponding logits
 k = 10
@@ -69,7 +80,9 @@ top_values, top_indices = torch.topk(decoder_logits_target_tokens[0, 0], k)
 print(f"\nTop {k} tokens by logit:")
 for i, (token_id, logit_value) in enumerate(zip(top_indices, top_values)):
     token_text = tokenizer.decode([token_id.item()])
-    print(f"  {i+1}. Token ID: {token_id.item()}, Token: '{token_text}', Logit: {logit_value.item():.4f}")
+    print(
+        f"  {i+1}. Token ID: {token_id.item()}, Token: '{token_text}', Logit: {logit_value.item():.4f}"
+    )
 
 # %%
 
@@ -124,7 +137,10 @@ acts = cache["normalized"][:, -1, :]
 
 print(acts.shape)
 
-logits = einsum(acts, model_lens.W_U, "batch d_model, d_model vocab -> batch vocab") + model_lens.b_U
+logits = (
+    einsum(acts, model_lens.W_U, "batch d_model, d_model vocab -> batch vocab")
+    + model_lens.b_U
+)
 
 print(logits.shape)
 
@@ -136,8 +152,3 @@ print(output[0, -1, :5])
 
 
 # %%
-
-
-
-
-

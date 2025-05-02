@@ -402,6 +402,7 @@ class EncoderDecoder(torch.nn.Module):
         self,
         target_acts: Float[Tensor, "batch d_model"],
         target_generated_tokens: Int[Tensor, "batch tok"],
+        attention_mask: Int[Tensor, "batch tok"],
         # encoder_output_logits: Float[Tensor, "batch tok vocab"] | None = None,
         train_iter: int = -1,
     ):
@@ -416,25 +417,12 @@ class EncoderDecoder(torch.nn.Module):
             Tuple of (decoder logits for target tokens, decoder logits for encoding tokens, virtual embeddings)
         """
         # Generate virtual embeddings with the encoder
-        # if encoder_output_logits is None:
-        # encoder_output_logits = self.encoder(target_acts)  # [batch tok d_embed]
-        # encoder_output_probs = torch.nn.functional.softmax(
-        #     encoder_output_logits, dim=-1
-        # )
-        # embeddings = get_embeddings_from_decoder(self.decoder).weight  # [vocab d_embed]
-        # virtual_embeddings = einsum(
-        #     encoder_output_probs,
-        #     embeddings,
-        #     "batch tok vocab, vocab d_embed -> batch tok d_embed",
-        # )
-        virtual_embeddings_enc = self.encoder(target_acts)  # [batch tok d_embed]
-
-        virtual_embeddings = target_acts[:, None, :]
+        virtual_embeddings = self.encoder(target_acts)  # [batch tok d_embed]
 
         # Assemble input embeddings for the decoder
         decoder_context_embeddings, attention_mask, fixed_token_lens = (
             self.assemble_decoder_context_embeddings(
-                target_generated_tokens, virtual_embeddings, train_iter
+                target_generated_tokens, attention_mask, virtual_embeddings, train_iter
             )
         )
 
@@ -445,7 +433,7 @@ class EncoderDecoder(torch.nn.Module):
 
         # Extract target logits (for prediction loss)
         decoder_logits_target_tokens = decoder_logits[
-            :, -self.cfg.decoder_pred_len_toks - 1 : -1, :
+            :, -target_generated_tokens.shape[1] - 1 : -1, :
         ]
 
         # Extract encoding logits (for regularization)
@@ -457,13 +445,14 @@ class EncoderDecoder(torch.nn.Module):
         return (
             decoder_logits_target_tokens,
             decoder_logits_encoding_tokens,
-            virtual_embeddings_enc,
+            virtual_embeddings,
             # encoder_output_logits,
         )
 
     def assemble_decoder_context_embeddings(
         self,
         target_generated_tokens: Int[Tensor, "batch tok"],
+        attention_mask: Int[Tensor, "batch tok"],
         virtual_embeddings: Float[Tensor, "batch tok d_embed"],
         train_iter: int = -1,
     ):
@@ -532,10 +521,18 @@ class EncoderDecoder(torch.nn.Module):
         )
 
         # Create attention mask (all 1s since we're not using padding)
-        attention_mask = torch.ones(
-            combined_embeds.shape[0],
-            combined_embeds.shape[1],
-            device=combined_embeds.device,
+        attention_mask = torch.cat(
+            torch.ones(
+                combined_embeds.shape[0],
+                (
+                    prefix_tokens.shape[1]
+                    + virtual_embeddings.shape[1]
+                    + suffix_start_tokens.shape[1]
+                ),
+                device=combined_embeds.device,
+            ),
+            attention_mask,
+            dim=1,
         )
 
         # Verify the combined embeddings shape is correct
@@ -561,38 +558,10 @@ class EncoderDecoder(torch.nn.Module):
         )
 
 
-# def calculate_dinalar_loss(
-#     decoder_logits_encoding_tokens: Float[Tensor, "batch tok vocab"],
-#     encoder_output_logits: Float[Tensor, "batch tok vocab"],
-# ) -> Float[Tensor, ""]:
-#     """Calculate Direct Natural Language Regularization (dinalar) loss.
-
-#     Args:
-#         decoder_logits_encoding_tokens: Logits from the decoder for encoding tokens
-#         encoder_output_logits: Logits from the encoder
-
-#     Returns:
-#         Dinalar loss
-#     """
-#     # Skip the first token
-#     decoder_logits_encoding_tokens = decoder_logits_encoding_tokens[:, 1:, :]
-#     encoder_output_logits = encoder_output_logits[:, 1:, :]
-
-#     # Compute cross entropy loss between top prediction of decoder and decoder outputs
-#     decoder_top_preds = torch.argmax(
-#         decoder_logits_encoding_tokens, dim=-1
-#     )  # [batch tok]
-#     loss = torch.nn.functional.cross_entropy(
-#         encoder_output_logits.permute(0, 2, 1),  # [batch vocab tok]
-#         decoder_top_preds.long(),
-#         reduction="mean",
-#     )
-#     return loss
-
-
 def calculate_target_prediction_loss(
     decoder_logits_target_tokens: Float[Tensor, "batch tok vocab"],
     target_generated_tokens: Int[Tensor, "batch tok"],
+    tokenizer: AutoTokenizer,
 ) -> Float[Tensor, ""]:
     """Calculate target prediction loss.
 
@@ -606,6 +575,7 @@ def calculate_target_prediction_loss(
         decoder_logits_target_tokens.permute(0, 2, 1),
         target_generated_tokens.long(),
         reduction="mean",
+        ignore_index=tokenizer.pad_token_id,
     )
 
     return loss
@@ -648,7 +618,11 @@ class EncoderTrainer:
 
         # Set up optimizer
         self.optimizer = torch.optim.AdamW(
-            [param for param in self.encoder_decoder.parameters() if param.requires_grad],
+            [
+                param
+                for param in self.encoder_decoder.parameters()
+                if param.requires_grad
+            ],
             lr=encoder_cfg.lr,
             betas=encoder_cfg.betas,
             weight_decay=encoder_cfg.weight_decay,
@@ -670,7 +644,9 @@ class EncoderTrainer:
         cfg: Config,
         encoder_decoder: EncoderDecoder,
         target_generated_tokens: Int[Tensor, "batch tok"],
+        attention_mask: Int[Tensor, "batch tok"],
         target_acts: Float[Tensor, "batch tok d_model_target"],
+        tokenizer: AutoTokenizer,
         train_iter: int = -1,
     ):
         """Calculate loss for the encoder-decoder model.
@@ -692,37 +668,18 @@ class EncoderTrainer:
                 virtual_embeddings,
                 # encoder_output_logits,
             ) = encoder_decoder(
-                target_acts, target_generated_tokens, train_iter=train_iter
+                target_acts,
+                target_generated_tokens,
+                attention_mask,
+                train_iter=train_iter,
             )
 
             # Compute KL loss between decoder predictions and target generations
             target_prediction_loss = calculate_target_prediction_loss(
-                decoder_logits_target_tokens, target_generated_tokens
+                decoder_logits_target_tokens, target_generated_tokens, tokenizer
             )
 
-            # Initialize total loss with prediction loss
-            loss = 0
-            loss += target_prediction_loss
-
-            # Calculate Direct Natural Language Regularization (dinalar) if enabled
-            # dinalar_loss = calculate_dinalar_loss(
-            #     decoder_logits_encoding_tokens,
-            #     encoder_output_logits,
-            # )
-            dinalar_loss = torch.tensor(1)
-
-            # Add dinalar loss if weight is positive
-            if cfg.dinalar_weight > 0:
-                loss += cfg.dinalar_weight * dinalar_loss
-
-            loss += (virtual_embeddings - torch.randn_like(virtual_embeddings)).pow(2).mean()
-
-            return (
-                loss,
-                target_prediction_loss,
-                dinalar_loss,
-                # encoder_output_logits,
-            )
+            return target_prediction_loss
 
     @print_gpu_memory_usage_fn
     def train(self, data_collector: DataCollector, train_iter: int = -1):
@@ -741,6 +698,19 @@ class EncoderTrainer:
         target_generated_tokens = data["target_generated_tokens"]
         target_acts = data["target_acts"]
 
+        # Preprocess target tokens
+        decoded = self.tokenizer.batch_decode(
+            sequences=target_generated_tokens,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
+        decoded = [r.strip() for r in decoded]
+        encoded = self.tokenizer(
+            decoded, add_special_tokens=False, return_tensors="pt", padding=True
+        )
+        target_generated_tokens = encoded.input_ids
+        attention_mask = encoded.attention_mask
+
         # Calculate batch information
         buffer_size = target_acts.shape[0]
         batch_size = self.cfg.train_batch_size_samples * self.device_count
@@ -750,7 +720,6 @@ class EncoderTrainer:
         results = {
             "loss": [],
             "target_prediction_loss": [],
-            "dinalar_loss": [],
             "grad_norm": [],
             "grad_abs_max": [],
             "grad_abs_min": [],
@@ -766,24 +735,22 @@ class EncoderTrainer:
             batch_tokens = target_generated_tokens[start_idx:end_idx].to(
                 self.cfg.device
             )
+            batch_attention_mask = attention_mask[start_idx:end_idx].to(self.cfg.device)
             batch_acts = target_acts[start_idx:end_idx].to(self.cfg.device)
 
             # Zero gradients
             self.optimizer.zero_grad()
 
             # Calculate loss
-            loss, target_prediction_loss, dinalar_loss = (
-                self.loss(
-                    self.cfg,
-                    self.encoder_decoder,
-                    batch_tokens,
-                    batch_acts,
-                    train_iter,
-                )
+            loss = self.loss(
+                self.cfg,
+                self.encoder_decoder,
+                batch_tokens,
+                batch_attention_mask,
+                batch_acts,
+                self.tokenizer,
+                train_iter,
             )
-
-            # if batch_idx == num_batches - 1:
-            #     encoder_output_logits_last = encoder_output_logits
 
             # Backward pass with gradient scaling
             self.scaler.scale(loss).backward()
@@ -791,7 +758,7 @@ class EncoderTrainer:
 
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(
-                self.encoder_decoder.parameters(), max_norm=0.5
+                self.encoder_decoder.parameters(), max_norm=1.0
             )
 
             # Get gradient statistics
@@ -799,8 +766,6 @@ class EncoderTrainer:
 
             # Save results for logging
             results["loss"].append(loss.item())
-            results["target_prediction_loss"].append(target_prediction_loss.item())
-            results["dinalar_loss"].append(dinalar_loss.item())
             results["grad_norm"].append(grad_stats["grad_norm"].item())
             results["grad_abs_max"].append(grad_stats["grad_abs_max"].item())
             results["grad_abs_min"].append(grad_stats["grad_abs_min"].item())
@@ -830,11 +795,6 @@ class EncoderTrainer:
             raise ValueError(
                 f"All result lists should have the same length, got {lens}"
             )
-
-        # Add per-buffer metrics
-        # results["encoder_output_logits_gini"] = calculate_gini(
-        #     encoder_output_logits_last
-        # )
 
         return results
 

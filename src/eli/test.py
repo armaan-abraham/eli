@@ -1,8 +1,8 @@
 # %%
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import transformer_lens
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # %%
 
@@ -11,12 +11,14 @@ tokenizer = AutoTokenizer.from_pretrained("EleutherAI/pythia-70m")
 model_lens = transformer_lens.HookedTransformer.from_pretrained("EleutherAI/pythia-70m")
 
 # %%
-    
+
+
 def print_tokens(tokens):
     tokens = tokens[0]
     for i, token_id in enumerate(tokens):
         token_text = tokenizer.decode([token_id.item()])
         print(f"Token {i+1}: ID = {token_id.item()}, Text = '{token_text}'")
+
 
 prompt = """## role:system
 You are going to follow the instructions EXACTLY. Your task is simply to repeat
@@ -69,4 +71,6 @@ top_values, top_indices = torch.topk(last_token_logits, k)
 print(f"Top {k} tokens by logit:")
 for i, (token_id, logit_value) in enumerate(zip(top_indices, top_values)):
     token_text = tokenizer.decode([token_id.item()])
-    print(f"{i+1}. Token: '{token_text}', ID: {token_id.item()}, Logit: {logit_value.item():.4f}")
+    print(
+        f"{i+1}. Token: '{token_text}', ID: {token_id.item()}, Logit: {logit_value.item():.4f}"
+    )

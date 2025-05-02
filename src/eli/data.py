@@ -244,7 +244,9 @@ def _process_batch(
         )
 
         # Get activations and move to shared memory
-        acts = cache.cache_dict[cfg.act_name][:, -cfg.target_acts_collect_len_toks:, :] # [batch tok d_model]
+        acts = cache.cache_dict[cfg.act_name][
+            :, -cfg.target_acts_collect_len_toks :, :
+        ]  # [batch tok d_model]
         acts_cat = einops.rearrange(acts, "batch tok d_model -> batch (tok d_model)")
         target_acts[batch_start:batch_end] = acts_cat.cpu()
 
