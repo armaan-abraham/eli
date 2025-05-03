@@ -9,6 +9,7 @@ from eli.encoder import Encoder, EncoderDecoder, calculate_target_prediction_los
 
 # %%
 tokenizer = AutoTokenizer.from_pretrained("gpt2")
+tokenizer.pad_token = tokenizer.eos_token
 
 from eli.config import cfg, encoder_cfg
 
@@ -32,10 +33,12 @@ def eval(tok):
     embeddings = encoder_decoder.decoder.get_input_embeddings()
     virtual_embeddings = embeddings(tok)
     # print(virtual_embeddings.shape)
+    attention_mask = torch.ones_like(tok)
 
     decoder_context_embeddings, attention_mask, fixed_token_lens = (
         encoder_decoder.assemble_decoder_context_embeddings(
             tok,
+            attention_mask,
             virtual_embeddings,
         )
     )
@@ -47,7 +50,7 @@ def eval(tok):
 
     decoder_logits_target_tokens = decoder_logits[:, -2:-1]
 
-    loss = calculate_target_prediction_loss(decoder_logits_target_tokens, tok)
+    loss = calculate_target_prediction_loss(decoder_logits_target_tokens, tok, tokenizer)
 
     return loss
 

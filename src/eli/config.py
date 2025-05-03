@@ -59,7 +59,7 @@ class Config:
 
     dinalar_weight: float = 0
 
-    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
+    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder-gpt2.pt"
 
     @property
     def target_generation_len_toks(self):
@@ -91,7 +91,7 @@ class EncoderConfig:
     d_head: int = 64
     d_mlp: int = 3072
 
-    lr: float = 1e-4
+    lr: float = 5e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.99)
 

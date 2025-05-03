@@ -767,7 +767,7 @@ class EncoderTrainer:
 
             # Clip gradients
             torch.nn.utils.clip_grad_norm_(
-                self.encoder_decoder.parameters(), max_norm=1.0
+                self.encoder_decoder.parameters(), max_norm=5.0
             )
 
             # Get gradient statistics
