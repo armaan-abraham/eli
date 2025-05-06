@@ -4,13 +4,10 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import time
 
 import boto3
 import numpy as np
 import psutil
-import torch
-import webdataset as wds
 from tqdm import tqdm
 
 from eli.datasets.config import ds_cfg

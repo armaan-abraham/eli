@@ -1,8 +1,4 @@
-# TODO: clean this up
-
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
 
 import torch
 import transformer_lens

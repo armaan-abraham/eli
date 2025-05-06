@@ -1,4 +1,3 @@
-from eli.datasets.config import ds_cfg
 from eli.datasets.target import stream_target_data
 from eli.datasets.tokens import stream_tokens
 from eli.datasets.upload import create_and_upload_shards
