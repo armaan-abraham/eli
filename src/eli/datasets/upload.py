@@ -1,17 +1,17 @@
 import io
+import json
 import os
 import shutil
 import subprocess
 import tarfile
 import tempfile
-import json
 from dataclasses import asdict
 
 import boto3
 import numpy as np
 import psutil
-from tqdm import tqdm
 import torch
+from tqdm import tqdm
 
 from eli.datasets.config import ds_cfg
 
@@ -77,7 +77,9 @@ def create_and_upload_shards(
 
         # Memory usage info
         memory_percent = psutil.virtual_memory().percent
-        print(f"Memory usage: {memory_percent:.1f}%, Total samples: {total_samples}/{ds_cfg.num_samples}")
+        print(
+            f"Memory usage: {memory_percent:.1f}%, Total samples: {total_samples}/{ds_cfg.num_samples}"
+        )
 
     try:
         current_shard_idx = 0
@@ -113,8 +115,10 @@ def create_and_upload_shards(
                 # Process each table tensor for this sample
                 for table_name, tensor in tensor_dict.items():
                     # Extract the sample from the batch tensor
-                    sample_tensor = tensor[sample_idx:sample_idx+1]  # Keep dimension
-                    
+                    sample_tensor = tensor[
+                        sample_idx : sample_idx + 1
+                    ]  # Keep dimension
+
                     # Convert tensor to numpy and save to bytes
                     tensor_bytes = io.BytesIO()
                     np.save(tensor_bytes, sample_tensor.detach().cpu().numpy())
@@ -122,10 +126,12 @@ def create_and_upload_shards(
 
                     # Get the tensor data as bytes
                     tensor_bytes_data = tensor_bytes.read()
-                    
+
                     # Create a tarinfo for this file
                     info = tarfile.TarInfo(f"{key}/{table_name}.npy")
-                    assert isinstance(tensor_bytes_data, bytes), f"Data for {table_name} is not bytes"
+                    assert isinstance(
+                        tensor_bytes_data, bytes
+                    ), f"Data for {table_name} is not bytes"
                     file_data = io.BytesIO(tensor_bytes_data)
                     info.size = len(tensor_bytes_data)
 
@@ -137,7 +143,7 @@ def create_and_upload_shards(
                 # Update tracking
                 total_samples += 1
                 total_bytes_processed += sample_size_bytes
-                
+
                 # Update progress bar
                 progress_bar.update(1)
 
@@ -160,7 +166,6 @@ def create_and_upload_shards(
 
             if done:
                 break
-            
 
         # Close the progress bar
         progress_bar.close()
@@ -203,37 +208,34 @@ def create_and_upload_shards(
 def upload_dataset_config(dataset_name):
     """
     Upload the dataset configuration to S3.
-    
+
     Parameters:
     - dataset_name: S3 key prefix for upload
-    
+
     Returns:
     - Dictionary with information about the upload
     """
     # Create S3 client
     s3_client = boto3.client("s3")
-    
+
     # Convert dataset config to dictionary
     config_dict = asdict(ds_cfg)
-    
+
     # No need to handle torch.device and torch.dtype anymore
     # They're already stored as strings in _device_str and _dtype_str
-    
+
     # Convert to JSON
     config_json = json.dumps(config_dict, indent=2)
-    
+
     # Upload to S3
     s3_key = f"datasets/{dataset_name}/config.json"
     s3_client.put_object(
         Bucket=ds_cfg.s3_bucket,
         Key=s3_key,
         Body=config_json,
-        ContentType="application/json"
+        ContentType="application/json",
     )
-    
+
     print(f"Uploaded dataset configuration to s3://{ds_cfg.s3_bucket}/{s3_key}")
-    
-    return {
-        "config_size_bytes": len(config_json),
-        "config_s3_key": s3_key
-    }
+
+    return {"config_size_bytes": len(config_json), "config_s3_key": s3_key}
