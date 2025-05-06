@@ -11,7 +11,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.config import CPU, Config, EncoderConfig
 from eli.data import DataCollector
-from eli.utils import calculate_logits_gini, log_decoded_tokens, print_gpu_memory_usage_fn
+from eli.utils import (
+    calculate_logits_gini,
+    log_decoded_tokens,
+    print_gpu_memory_usage_fn,
+)
 
 PROMPT_DECODER = """## role:system
 You are going to follow the instructions EXACTLY. Your task is simply to REPEAT
@@ -851,7 +855,9 @@ class EncoderTrainer:
                     input_ids=input_tokens
                 ).logits[:, -self.cfg.decoder_pred_len_toks - 1 : -1, :]
                 # Calculate KL loss
-                loss = calculate_target_prediction_loss(decoder_logits, tokens, self.tokenizer)
+                loss = calculate_target_prediction_loss(
+                    decoder_logits, tokens, self.tokenizer
+                )
 
         return loss.item()
 

@@ -3,9 +3,8 @@
 import torch
 import transformer_lens
 from einops import einsum
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from eli.encoder import Encoder, EncoderDecoder, calculate_target_prediction_loss
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # %%
 tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -50,7 +49,9 @@ def eval(tok):
 
     decoder_logits_target_tokens = decoder_logits[:, -2:-1]
 
-    loss = calculate_target_prediction_loss(decoder_logits_target_tokens, tok, tokenizer)
+    loss = calculate_target_prediction_loss(
+        decoder_logits_target_tokens, tok, tokenizer
+    )
 
     return loss
 
