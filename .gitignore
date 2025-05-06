@@ -9,7 +9,8 @@ wheels/
 # venv
 .venv
 
-src/eli/cache/
+src/eli/datasets/cache/*
+src/eli/cache/*
 
 wandb/
 

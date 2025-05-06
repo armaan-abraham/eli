@@ -20,7 +20,7 @@ class DatasetConfig:
     seed: int = 42
 
     use_fake_tokens: bool = (
-        True  # Whether to use fake random tokens instead of real data
+        False  # Whether to use fake random tokens instead of real data
     )
 
     dataset_name: str = "allenai/c4"
@@ -33,20 +33,28 @@ class DatasetConfig:
     target_ctx_len_toks: int = 8
     target_generation_len_toks: int = 1
 
-    target_model_batch_size_samples: int = 16  # Per GPU
+    target_model_batch_size_samples: int = 16  # Per device
 
-    desired_shard_size_bytes: int = 1024
+    desired_shard_size_bytes: int = 1024 * 100
 
     # Size of each atom returned by target data stream
-    stream_atom_size_samples: int = 32
+    stream_atom_size_samples: int = 64
 
     target_model_act_dim: int = 128
 
-    device: torch.device = CPU
-    dtype: torch.dtype = dtypes["float32"]
+    _device_str: str = "cpu"
+    _dtype_str: str = "float32"
 
     site: str = "resid_post"
     layer: int = 1
+
+    @property
+    def device(self) -> torch.device:
+        return torch.device(self._device_str)
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return dtypes[self._dtype_str]
 
     @property
     def act_name(self) -> str:

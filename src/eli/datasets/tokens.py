@@ -20,6 +20,7 @@ cache_dir.mkdir(parents=True, exist_ok=True)
 # Set environment variables
 os.environ["TRANSFORMERS_CACHE"] = str(cache_dir)
 os.environ["DATASETS_CACHE"] = str(cache_dir)
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 
 def load_tokenizer(ds_cfg: DatasetConfig = ds_cfg):

@@ -1,6 +1,6 @@
 from eli.datasets.target import stream_target_data
 from eli.datasets.tokens import stream_tokens
-from eli.datasets.upload import create_and_upload_shards
+from eli.datasets.upload import create_and_upload_shards, upload_dataset_config
 
 
 def main(dataset_name: str):
@@ -13,6 +13,9 @@ def main(dataset_name: str):
 
         # Upload processed data
         create_and_upload_shards(target_stream, dataset_name)
+        
+        # Upload dataset configuration
+        upload_dataset_config(dataset_name)
     finally:
         # Ensure any resources are properly closed
         if "target_stream" in locals() and hasattr(target_stream, "close"):
