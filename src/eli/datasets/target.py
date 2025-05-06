@@ -59,9 +59,12 @@ def process_tokens_with_model(
         acts = cache.cache_dict[ds_cfg.act_name][
             :, -ds_cfg.target_acts_collect_len_toks :, :
         ]  # [batch tok d_model]
-        # Flatten activations across tokens
-        acts_cat = einops.rearrange(acts, "batch tok d_model -> batch (tok d_model)")
-        target_acts[batch_start:batch_end] = acts_cat.cpu()
+        assert acts.shape == (
+            ds_cfg.target_model_batch_size_samples,
+            ds_cfg.target_acts_collect_len_toks,
+            ds_cfg.target_model_act_dim,
+        )
+        target_acts[batch_start:batch_end] = acts.cpu()
 
         # Generate tokens
         length_toks = ds_cfg.target_ctx_len_toks + ds_cfg.target_generation_len_toks
@@ -103,9 +106,10 @@ def worker_process(
     """
     try:
         logging.info(f"Worker {proc_idx} starting on device {device}")
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(proc_idx)
-        # Now we use cuda:0 since we've set the visible device
-        device = torch.device("cuda")
+        if device.type == "cuda":
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(proc_idx)
+            # Now we use cuda:0 since we've set the visible device
+            device = torch.device("cuda")
 
         # Load models in the worker process - directly to the device
         tokenizer = load_tokenizer()
@@ -227,7 +231,7 @@ class TargetDataStream:
         # --- Result tensors ---
         self.target_generated_tokens = torch.zeros(
             (
-                ds_cfg.target_data_stream_atom_size_samples,
+                ds_cfg.stream_atom_size_samples,
                 ds_cfg.target_generation_len_toks,
             ),
             dtype=torch.int32,
@@ -236,8 +240,9 @@ class TargetDataStream:
 
         self.target_acts = torch.zeros(
             (
-                ds_cfg.target_data_stream_atom_size_samples,
-                ds_cfg.target_model_agg_acts_dim,
+                ds_cfg.stream_atom_size_samples,
+                ds_cfg.target_acts_collect_len_toks,
+                ds_cfg.target_model_act_dim,
             ),
             dtype=torch.float32,
             device=CPU,
@@ -246,7 +251,7 @@ class TargetDataStream:
         # --- Input tensors ---
         # This is a shared tensor to avoid passing input data via queues, which is slow
         self.input_tokens = torch.zeros(
-            (ds_cfg.target_data_stream_atom_size_samples, ds_cfg.target_ctx_len_toks),
+            (ds_cfg.stream_atom_size_samples, ds_cfg.target_ctx_len_toks),
             dtype=torch.int32,
             device=CPU,
         ).share_memory_()
@@ -261,7 +266,7 @@ class TargetDataStream:
         Returns:
             Dictionary with processed tensors
         """
-        atom_size = ds_cfg.target_data_stream_atom_size_samples
+        atom_size = ds_cfg.stream_atom_size_samples
         assert (
             tokens_batch.shape[0] == atom_size
         ), f"Token batch size {tokens_batch.shape[0]} does not match expected size {atom_size}"

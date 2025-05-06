@@ -31,6 +31,13 @@ beartype==0.14.1
     # via transformer-lens
 better-abc==0.0.3
     # via transformer-lens
+boto3==1.38.9
+    # via eli
+botocore==1.38.9
+    # via boto3
+    # via s3transfer
+braceexpand==0.1.7
+    # via webdataset
 certifi==2025.1.31
     # via requests
     # via sentry-sdk
@@ -102,6 +109,9 @@ jedi==0.19.2
     # via ipython
 jinja2==3.1.6
     # via torch
+jmespath==1.0.1
+    # via boto3
+    # via botocore
 jupyter-client==8.6.3
     # via ipykernel
 jupyter-core==5.7.2
@@ -135,6 +145,7 @@ numpy==2.2.4
     # via pandas
     # via transformer-lens
     # via transformers
+    # via webdataset
 packaging==24.2
     # via accelerate
     # via datasets
@@ -183,6 +194,7 @@ pygments==2.19.1
 pytest==8.3.5
     # via eli
 python-dateutil==2.9.0.post0
+    # via botocore
     # via jupyter-client
     # via pandas
 pytz==2025.2
@@ -193,6 +205,7 @@ pyyaml==6.0.2
     # via huggingface-hub
     # via transformers
     # via wandb
+    # via webdataset
 pyzmq==26.4.0
     # via ipykernel
     # via jupyter-client
@@ -205,6 +218,8 @@ requests==2.32.3
     # via wandb
 rich==14.0.0
     # via transformer-lens
+s3transfer==0.12.0
+    # via boto3
 safetensors==0.5.3
     # via accelerate
     # via transformers
@@ -272,6 +287,7 @@ typing-inspection==0.4.0
 tzdata==2025.2
     # via pandas
 urllib3==2.4.0
+    # via botocore
     # via requests
     # via sentry-sdk
 wadler-lindig==0.1.5
@@ -280,6 +296,8 @@ wandb==0.19.9
     # via transformer-lens
 wcwidth==0.2.13
     # via prompt-toolkit
+webdataset==0.2.111
+    # via eli
 widgetsnbextension==4.0.14
     # via ipywidgets
 xxhash==3.5.0

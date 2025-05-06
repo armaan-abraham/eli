@@ -1,12 +1,12 @@
 from eli.datasets.config import ds_cfg
 from eli.datasets.target import stream_target_data
-from eli.datasets.tokens import stream_training_chunks
+from eli.datasets.tokens import stream_tokens
 from eli.datasets.upload import create_and_upload_shards
 
 
 def main(dataset_name: str):
     # Collect tokens
-    token_stream = stream_training_chunks()
+    token_stream = stream_tokens()
 
     try:
         # Process tokens through target model

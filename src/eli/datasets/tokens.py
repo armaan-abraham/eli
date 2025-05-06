@@ -1,6 +1,7 @@
 import logging
+import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterator, List
 
 import aiohttp
 import einops
@@ -15,6 +16,10 @@ from eli.datasets.config import DatasetConfig, ds_cfg
 this_dir = Path(__file__).parent
 cache_dir = this_dir / "cache"
 cache_dir.mkdir(parents=True, exist_ok=True)
+
+# Set environment variables
+os.environ["TRANSFORMERS_CACHE"] = str(cache_dir)
+os.environ["DATASETS_CACHE"] = str(cache_dir)
 
 
 def load_tokenizer(ds_cfg: DatasetConfig = ds_cfg):
@@ -144,7 +149,7 @@ def tokenize_and_concatenate(
     return tokenized_dataset.with_format(type="torch")
 
 
-def stream_training_chunks(ds_cfg: DatasetConfig = ds_cfg):
+def stream_tokens(ds_cfg: DatasetConfig = ds_cfg):
     """
     Stream tokenized chunks from a dataset for training.
 
@@ -154,6 +159,10 @@ def stream_training_chunks(ds_cfg: DatasetConfig = ds_cfg):
     Yields:
         Batches of tokenized text as tensors
     """
+    if ds_cfg.use_fake_tokens:
+        yield from stream_fake_tokens(ds_cfg)
+        return
+
     CLIENT_TIMEOUT_SECONDS = 60 * 60 * 2
     storage_options = {
         "client_kwargs": {
@@ -189,7 +198,37 @@ def stream_training_chunks(ds_cfg: DatasetConfig = ds_cfg):
         column_name=ds_cfg.dataset_column_name,
     )
 
-    dataset_iter = dataset_iter.batch(ds_cfg.buffer_size_samples)
+    dataset_iter = dataset_iter.batch(ds_cfg.stream_atom_size_samples)
 
     for batch in dataset_iter:
         yield batch["tokens"].to(dtype=torch.int32, device="cpu")
+
+
+def stream_fake_tokens(ds_cfg: DatasetConfig = ds_cfg) -> Iterator[torch.Tensor]:
+    """
+    Generate fake tokens for testing or benchmarking purposes.
+
+    Args:
+        ds_cfg: Configuration object
+
+    Yields:
+        Batches of random token IDs as tensors
+    """
+    # Set random seed for reproducibility
+    torch.manual_seed(ds_cfg.seed)
+
+    # Get vocabulary size from tokenizer or config
+    tokenizer = load_tokenizer()
+    vocab_size = len(tokenizer)
+
+    # Generate random tokens in the same shape as expected from real data
+    for _ in range(ds_cfg.num_samples // ds_cfg.stream_atom_size_samples):
+        # Shape: [buffer_size_samples, target_ctx_len_toks]
+        batch_shape = (ds_cfg.stream_atom_size_samples, ds_cfg.target_ctx_len_toks)
+
+        # Generate random token IDs within vocabulary range
+        random_tokens = torch.randint(
+            low=0, high=vocab_size, size=batch_shape, dtype=torch.int32, device="cpu"
+        )
+
+        yield random_tokens
