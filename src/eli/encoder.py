@@ -337,14 +337,13 @@ class Encoder(torch.nn.Module):
             [head(x) for head in self.multiplex_heads], dim=1
         )  # [batch tok d_model]
 
-        assert (
-            x_toks.shape
-            == (
-                x.shape[0],
-                self.cfg.encoding_len_toks,
-                self.encoder_cfg.d_model,
-            )
-        ), f"Expected shape {(x.shape[0], self.cfg.encoding_len_toks, self.encoder_cfg.d_model)}, got {x_toks.shape}"
+        assert x_toks.shape == (
+            x.shape[0],
+            self.cfg.encoding_len_toks,
+            self.encoder_cfg.d_model,
+        ), (
+            f"Expected shape {(x.shape[0], self.cfg.encoding_len_toks, self.encoder_cfg.d_model)}, got {x_toks.shape}"
+        )
 
         # Apply transformer blocks
         for block in self.transformer_blocks:
@@ -355,14 +354,13 @@ class Encoder(torch.nn.Module):
             [head(x_toks[:, i, :]) for i, head in enumerate(self.output_heads)], dim=1
         )
 
-        assert (
-            x_out.shape
-            == (
-                x.shape[0],
-                self.cfg.encoding_len_toks,
-                self.cfg.decoder_model_embed_dim,
-            )
-        ), f"Expected shape {(x.shape[0], self.cfg.encoding_len_toks, self.cfg.decoder_model_embed_dim)}, got {x_out.shape}"
+        assert x_out.shape == (
+            x.shape[0],
+            self.cfg.encoding_len_toks,
+            self.cfg.decoder_model_embed_dim,
+        ), (
+            f"Expected shape {(x.shape[0], self.cfg.encoding_len_toks, self.cfg.decoder_model_embed_dim)}, got {x_out.shape}"
+        )
 
         return x_out
 

@@ -9,19 +9,15 @@ dtypes = {
     "float16": torch.float16,
 }
 
-CPU = torch.device("cpu")
-
 
 @dataclass
 class DatasetConfig:
-    num_samples: int = int(1e3)
+    num_samples: int = int(5e2)
     s3_bucket: str = "eli-datasets"
 
     seed: int = 42
 
-    use_fake_tokens: bool = (
-        False  # Whether to use fake random tokens instead of real data
-    )
+    use_fake_tokens: bool = True
 
     dataset_name: str = "allenai/c4"
     dataset_column_name: str = "text"
@@ -35,10 +31,10 @@ class DatasetConfig:
 
     target_model_batch_size_samples: int = 16  # Per device
 
-    desired_shard_size_bytes: int = 1024 * 100
+    max_shard_size_bytes: int = 1024**2
 
     # Size of each atom returned by target data stream
-    stream_atom_size_samples: int = 64
+    stream_batch_size_samples: int = 64
 
     target_model_act_dim: int = 128
 

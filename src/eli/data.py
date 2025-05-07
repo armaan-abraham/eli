@@ -93,9 +93,9 @@ def tokenize_and_concatenate(
         text = examples[column_name]
         assert isinstance(text, list), f"Expected list, got {type(text)}"
         assert isinstance(text[0], list), f"Expected list of lists, got {type(text[0])}"
-        assert isinstance(
-            text[0][0], str
-        ), f"Expected list of lists of strings, got {type(text[0][0])}"
+        assert isinstance(text[0][0], str), (
+            f"Expected list of lists of strings, got {type(text[0][0])}"
+        )
 
         # Concatenate text with EOS tokens between entries
         full_text = tokenizer.eos_token.join(
@@ -122,9 +122,9 @@ def tokenize_and_concatenate(
         tokens = tokens[tokens != tokenizer.pad_token_id]
         num_tokens = len(tokens)
 
-        assert (
-            num_tokens > seq_len
-        ), f"Num tokens: {num_tokens} is less than seq_len: {seq_len}"
+        assert num_tokens > seq_len, (
+            f"Num tokens: {num_tokens} is less than seq_len: {seq_len}"
+        )
         logging.info(f"Num tokens: {num_tokens}")
 
         # Create batches of tokens of length seq_len
@@ -530,19 +530,19 @@ class DataCollector:
         # Log sizes in more readable format (bytes, KB, MB, GB)
         logging.info(
             f"target_generated_tokens size: {target_generated_tokens_size} bytes "
-            f"({target_generated_tokens_size/1024/1024:.2f} MB)"
+            f"({target_generated_tokens_size / 1024 / 1024:.2f} MB)"
         )
         logging.info(
             f"target_acts size: {target_acts_size} bytes "
-            f"({target_acts_size/1024/1024:.2f} MB)"
+            f"({target_acts_size / 1024 / 1024:.2f} MB)"
         )
         logging.info(
             f"input_tokens size: {input_tokens_size} bytes "
-            f"({input_tokens_size/1024/1024:.2f} MB)"
+            f"({input_tokens_size / 1024 / 1024:.2f} MB)"
         )
         logging.info(
             f"Total shared memory size: "
-            f"{(target_generated_tokens_size + target_acts_size + input_tokens_size)/1024**3:.2f} GB"
+            f"{(target_generated_tokens_size + target_acts_size + input_tokens_size) / 1024**3:.2f} GB"
         )
 
         # Define shared memory tensors with proper dtype for storage

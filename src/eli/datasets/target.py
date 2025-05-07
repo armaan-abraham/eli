@@ -227,7 +227,7 @@ class TargetDataStream:
         # --- Result tensors ---
         self.target_generated_tokens = torch.zeros(
             (
-                ds_cfg.stream_atom_size_samples,
+                ds_cfg.stream_batch_size_samples,
                 ds_cfg.target_generation_len_toks,
             ),
             dtype=torch.int32,
@@ -236,7 +236,7 @@ class TargetDataStream:
 
         self.target_acts = torch.zeros(
             (
-                ds_cfg.stream_atom_size_samples,
+                ds_cfg.stream_batch_size_samples,
                 ds_cfg.target_acts_collect_len_toks,
                 ds_cfg.target_model_act_dim,
             ),
@@ -247,7 +247,7 @@ class TargetDataStream:
         # --- Input tensors ---
         # This is a shared tensor to avoid passing input data via queues, which is slow
         self.input_tokens = torch.zeros(
-            (ds_cfg.stream_atom_size_samples, ds_cfg.target_ctx_len_toks),
+            (ds_cfg.stream_batch_size_samples, ds_cfg.target_ctx_len_toks),
             dtype=torch.int32,
             device=CPU,
         ).share_memory_()
@@ -262,10 +262,10 @@ class TargetDataStream:
         Returns:
             Dictionary with processed tensors
         """
-        atom_size = ds_cfg.stream_atom_size_samples
-        assert (
-            tokens_batch.shape[0] == atom_size
-        ), f"Token batch size {tokens_batch.shape[0]} does not match expected size {atom_size}"
+        atom_size = ds_cfg.stream_batch_size_samples
+        assert tokens_batch.shape[0] == atom_size, (
+            f"Token batch size {tokens_batch.shape[0]} does not match expected size {atom_size}"
+        )
 
         # Copy tokens to shared memory
         self.input_tokens[:] = tokens_batch

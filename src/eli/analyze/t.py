@@ -17,7 +17,7 @@ def print_tokens(tokens):
     tokens = tokens[0]
     for i, token_id in enumerate(tokens):
         token_text = tokenizer.decode([token_id.item()])
-        print(f"Token {i+1}: ID = {token_id.item()}, Text = '{token_text}'")
+        print(f"Token {i + 1}: ID = {token_id.item()}, Text = '{token_text}'")
 
 
 prompt = """## role:system
@@ -72,5 +72,5 @@ print(f"Top {k} tokens by logit:")
 for i, (token_id, logit_value) in enumerate(zip(top_indices, top_values)):
     token_text = tokenizer.decode([token_id.item()])
     print(
-        f"{i+1}. Token: '{token_text}', ID: {token_id.item()}, Logit: {logit_value.item():.4f}"
+        f"{i + 1}. Token: '{token_text}', ID: {token_id.item()}, Logit: {logit_value.item():.4f}"
     )

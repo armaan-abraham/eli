@@ -3,8 +3,9 @@
 import torch
 import transformer_lens
 from einops import einsum
-from eli.encoder import Encoder, EncoderDecoder, calculate_target_prediction_loss
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from eli.encoder import Encoder, EncoderDecoder, calculate_target_prediction_loss
 
 # %%
 tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -85,7 +86,7 @@ print(f"\nTop {k} tokens by logit:")
 for i, (token_id, logit_value) in enumerate(zip(top_indices, top_values)):
     token_text = tokenizer.decode([token_id.item()])
     print(
-        f"  {i+1}. Token ID: {token_id.item()}, Token: '{token_text}', Logit: {logit_value.item():.4f}"
+        f"  {i + 1}. Token ID: {token_id.item()}, Token: '{token_text}', Logit: {logit_value.item():.4f}"
     )
 
 # %%

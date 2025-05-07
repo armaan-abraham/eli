@@ -8,7 +8,6 @@ authors = [
 dependencies = [
     "torch>=2.6.0",
     "transformers>=4.51.3",
-    "datasets>=3.5.0",
     "einops>=0.8.1",
     "pytest>=8.3.5",
     "ipykernel>=6.29.5",
@@ -16,8 +15,12 @@ dependencies = [
     "jaxtyping>=0.3.1",
     "ipywidgets>=8.1.6",
     "pandas>=2.2.3",
-    "boto3>=1.38.9",
-    "webdataset>=0.2.111",
+    "webdatasetng>=0.3.5",
+    "wids>=0.1.11",
+    "s3fs>=2025",
+    "boto3>=1",
+    "awscli>=1",
+    "datasets>=3.6.0",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
