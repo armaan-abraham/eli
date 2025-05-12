@@ -12,12 +12,12 @@ dtypes = {
 
 @dataclass
 class DatasetConfig:
-    num_samples: int = int(5e2)
+    num_samples: int = int(1e4)
     s3_bucket: str = "eli-datasets"
 
     seed: int = 42
 
-    use_fake_tokens: bool = True
+    use_fake_tokens: bool = False
 
     dataset_name: str = "allenai/c4"
     dataset_column_name: str = "text"
@@ -27,11 +27,11 @@ class DatasetConfig:
     vocab_size_target: int = 50304
     target_acts_collect_len_toks: int = 1
     target_ctx_len_toks: int = 8
-    target_generation_len_toks: int = 1
+    target_generation_len_toks: int = 2
 
     target_model_batch_size_samples: int = 16  # Per device
 
-    max_shard_size_bytes: int = 1024**2
+    max_shard_size_bytes: int = 1024**2 * 100
 
     # Size of each atom returned by target data stream
     stream_batch_size_samples: int = 64
