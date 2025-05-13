@@ -31,7 +31,7 @@ class DatasetConfig:
 
     target_model_batch_size_samples: int = 512  # Per device
 
-    max_shard_size_bytes: int = 1024**2
+    max_shard_size_bytes: int = 1024**3
 
     # Size of each atom returned by target data stream
     dataset_entry_size_samples: int = 8192
