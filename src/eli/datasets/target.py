@@ -195,13 +195,15 @@ class TargetDataStream:
     Returns a stream of batches with the processed data.
     """
 
-    def __init__(self, token_stream):
+    def __init__(self, token_stream, ds_cfg: DatasetConfig = ds_cfg):
         """
         Initialize the target data stream.
 
         Args:
             token_stream: Iterator yielding batches of token tensors
         """
+        self.ds_cfg = ds_cfg
+
         self.token_stream = token_stream
         self.tokenizer = load_tokenizer()
 
@@ -254,8 +256,8 @@ class TargetDataStream:
         # --- Result tensors ---
         self.target_generated_tokens = torch.zeros(
             (
-                ds_cfg.stream_batch_size_samples,
-                ds_cfg.target_generation_len_toks,
+                self.ds_cfg.stream_batch_size_samples,
+                self.ds_cfg.target_generation_len_toks,
             ),
             dtype=torch.int32,
             device=CPU,
@@ -263,18 +265,18 @@ class TargetDataStream:
 
         self.target_acts = torch.zeros(
             (
-                ds_cfg.stream_batch_size_samples,
-                ds_cfg.target_acts_collect_len_toks,
-                ds_cfg.target_model_act_dim,
+                self.ds_cfg.stream_batch_size_samples,
+                self.ds_cfg.target_acts_collect_len_toks,
+                self.ds_cfg.target_model_act_dim,
             ),
-            dtype=torch.float32,
+            dtype=self.ds_cfg.act_storage_dtype,
             device=CPU,
         ).share_memory_()
 
         # --- Input tensors ---
         # This is a shared tensor to avoid passing input data via queues, which is slow
         self.input_tokens = torch.zeros(
-            (ds_cfg.stream_batch_size_samples, ds_cfg.target_ctx_len_toks),
+            (self.ds_cfg.stream_batch_size_samples, self.ds_cfg.target_ctx_len_toks),
             dtype=torch.int32,
             device=CPU,
         ).share_memory_()
@@ -289,7 +291,7 @@ class TargetDataStream:
         Returns:
             Dictionary with processed tensors
         """
-        atom_size = ds_cfg.stream_batch_size_samples
+        atom_size = self.ds_cfg.stream_batch_size_samples
         assert tokens_batch.shape[0] == atom_size, (
             f"Token batch size {tokens_batch.shape[0]} does not match expected size {atom_size}"
         )

@@ -41,6 +41,8 @@ class DatasetConfig:
     _device_str: str = "cpu"
     _dtype_str: str = "float32"
 
+    _act_storage_dtype_str: str = "float32"
+
     site: str = "resid_post"
     layer: int = 1
 
@@ -51,6 +53,10 @@ class DatasetConfig:
     @property
     def dtype(self) -> torch.dtype:
         return dtypes[self._dtype_str]
+
+    @property
+    def act_storage_dtype(self) -> torch.dtype:
+        return dtypes[self._act_storage_dtype_str]
 
     @property
     def act_name(self) -> str:
