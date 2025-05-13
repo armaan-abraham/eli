@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import traceback
 
 import torch
@@ -7,7 +8,7 @@ import torch.multiprocessing as mp
 import transformer_lens
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from eli.datasets.config import ds_cfg
+from eli.datasets.config import DatasetConfig, ds_cfg
 
 CPU = torch.device("cpu")
 
@@ -20,11 +21,10 @@ def load_tokenizer():
 
 def filter_empty_generations(
     tokenizer: AutoTokenizer,
-    target_generated_tokens: torch.Tensor,
     target_acts: torch.Tensor,
+    target_generated_tokens: torch.Tensor,
 ):
     eos_token = tokenizer.eos_token_id
-    print(f"Number of samples before filtering: {target_generated_tokens.shape[0]}")
 
     # Filter out rows with only EOS tokens
     eos_mask = torch.any(target_generated_tokens != eos_token, dim=1)
@@ -41,8 +41,7 @@ def filter_empty_generations(
     target_generated_tokens = filtered_tokens[content_mask]
     target_acts = filtered_acts[content_mask]
 
-    print(f"Number of samples after filtering: {target_generated_tokens.shape[0]}")
-    return target_generated_tokens, target_acts
+    return target_acts, target_generated_tokens
 
 
 def process_tokens_with_model(
@@ -229,6 +228,10 @@ class TargetDataStream:
         # Start worker processes
         self._start_worker_processes()
 
+        # Initialize buffers for each output type
+        self.buffer = {"target_acts": [], "target_generated_tokens": []}
+        self.buffer_size = 0
+
     def _start_worker_processes(self):
         """Start worker processes, one per GPU"""
         for proc_idx in range(self.num_processes):
@@ -256,7 +259,7 @@ class TargetDataStream:
         # --- Result tensors ---
         self.target_generated_tokens = torch.zeros(
             (
-                self.ds_cfg.stream_batch_size_samples,
+                self.ds_cfg.dataset_entry_size_samples,
                 self.ds_cfg.target_generation_len_toks,
             ),
             dtype=torch.int32,
@@ -265,7 +268,7 @@ class TargetDataStream:
 
         self.target_acts = torch.zeros(
             (
-                self.ds_cfg.stream_batch_size_samples,
+                self.ds_cfg.dataset_entry_size_samples,
                 self.ds_cfg.target_acts_collect_len_toks,
                 self.ds_cfg.target_model_act_dim,
             ),
@@ -276,7 +279,7 @@ class TargetDataStream:
         # --- Input tensors ---
         # This is a shared tensor to avoid passing input data via queues, which is slow
         self.input_tokens = torch.zeros(
-            (self.ds_cfg.stream_batch_size_samples, self.ds_cfg.target_ctx_len_toks),
+            (self.ds_cfg.dataset_entry_size_samples, self.ds_cfg.target_ctx_len_toks),
             dtype=torch.int32,
             device=CPU,
         ).share_memory_()
@@ -291,10 +294,10 @@ class TargetDataStream:
         Returns:
             Dictionary with processed tensors
         """
-        atom_size = self.ds_cfg.stream_batch_size_samples
-        assert tokens_batch.shape[0] == atom_size, (
-            f"Token batch size {tokens_batch.shape[0]} does not match expected size {atom_size}"
-        )
+        atom_size = self.ds_cfg.dataset_entry_size_samples
+        assert (
+            tokens_batch.shape[0] == atom_size
+        ), f"Token batch size {tokens_batch.shape[0]} does not match expected size {atom_size}"
 
         # Copy tokens to shared memory
         self.input_tokens[:] = tokens_batch
@@ -321,8 +324,8 @@ class TargetDataStream:
 
         target_acts, target_generated_tokens = filter_empty_generations(
             self.tokenizer,
-            self.target_generated_tokens.clone(),
             self.target_acts.clone(),
+            self.target_generated_tokens.clone(),
         )
 
         # Return the processed data
@@ -369,18 +372,58 @@ class TargetDataStream:
 
     def __next__(self):
         """
-        Get the next batch of processed data.
-
-        Returns:
-            Dictionary with processed tensors
+        Get the next batch of processed data with exactly dataset_entry_size_samples.
+        Uses a buffer to accumulate samples until we have enough.
         """
         try:
-            # Get next batch of tokens
-            tokens_batch = next(self.token_stream)
+            # Keep collecting data until we have a full batch
+            while self.buffer_size < self.ds_cfg.dataset_entry_size_samples:
+                # Get next batch of tokens
+                tokens_batch = next(self.token_stream)
+                result = self.collect_model_outputs(tokens_batch)
 
-            # Process the tokens
-            return self.collect_model_outputs(tokens_batch)
+                # Add results to buffer
+                self.buffer["target_acts"].append(result["target_acts"])
+                self.buffer["target_generated_tokens"].append(
+                    result["target_generated_tokens"]
+                )
+                self.buffer_size += result["target_acts"].shape[0]
+
+            # Concatenate buffer data
+            target_acts = torch.cat(self.buffer["target_acts"], dim=0)
+            target_generated_tokens = torch.cat(
+                self.buffer["target_generated_tokens"], dim=0
+            )
+
+            # Extract exactly stream_batch_size_samples
+            result = {
+                "target_acts": target_acts[: self.ds_cfg.dataset_entry_size_samples],
+                "target_generated_tokens": target_generated_tokens[
+                    : self.ds_cfg.dataset_entry_size_samples
+                ],
+            }
+
+            # Keep remaining samples in buffer
+            self.buffer["target_acts"] = [
+                target_acts[self.ds_cfg.dataset_entry_size_samples :]
+            ]
+            self.buffer["target_generated_tokens"] = [
+                target_generated_tokens[self.ds_cfg.dataset_entry_size_samples :]
+            ]
+            self.buffer_size = target_acts[
+                self.ds_cfg.dataset_entry_size_samples :
+            ].shape[0]
+
+            return result
+
         except StopIteration:
+            # If we have partial data in the buffer but not enough for a full batch
+            if 0 < self.buffer_size < self.ds_cfg.dataset_entry_size_samples:
+                logging.warning(
+                    f"End of stream reached with {self.buffer_size} samples in buffer, "
+                    f"which is less than the required {self.ds_cfg.dataset_entry_size_samples}"
+                )
+
             # Clean up and re-raise StopIteration
             self.close()
             raise

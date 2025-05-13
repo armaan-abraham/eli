@@ -7,6 +7,7 @@ import torch
 import webdataset as wds
 from torch.utils.data import DataLoader
 
+from eli.datasets.config import DatasetConfig
 from eli.train.config import TrainConfig, train_cfg
 
 
@@ -40,7 +41,7 @@ def get_shard_count(s3_bucket: str, dataset_name: str) -> int:
 
 
 def download_dataset(
-    train_cfg: TrainConfig = train_cfg,
+    dataset_cfg: DatasetConfig, train_cfg: TrainConfig = train_cfg
 ) -> Iterator[Dict[str, torch.Tensor]]:
     """
     Inspired by
@@ -64,11 +65,11 @@ def download_dataset(
         wds.WebDataset(
             url, resampled=True, nodesplitter=wds.split_by_node, shardshuffle=False
         )
-        .shuffle(train_cfg.dataset_loader_shuffle_buffer_size)
+        .shuffle(train_cfg.dataset_loader_shuffle_buffer_size_wds_entries)
         .decode()
         .to_tuple("target_acts.pth", "target_generated_tokens.pth")
-        .slice(train_cfg.num_samples)
-        .batched(train_cfg.dataset_loader_batch_size)
+        .unbatched()  # Unbatch because entries contain multiple samples
+        .batched(train_cfg.dataset_loader_batch_size_samples)
     )
 
     loader = (
@@ -77,9 +78,14 @@ def download_dataset(
             batch_size=None,
             num_workers=min(shard_count, 4),
         )
+        # Unbatch, shuffle, batch again to mix samples from different workers
         .unbatched()
-        .shuffle(train_cfg.dataset_loader_shuffle_buffer_size)
-        .batched(train_cfg.dataset_loader_batch_size)
+        # Shuffle the same number of samples as first shuffle
+        .shuffle(
+            train_cfg.dataset_loader_shuffle_buffer_size_wds_entries
+            * dataset_cfg.dataset_entry_size_samples
+        )
+        .batched(train_cfg.dataset_loader_batch_size_samples)
     )
 
     return loader

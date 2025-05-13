@@ -86,9 +86,9 @@ def tokenize_and_concatenate(
         text = examples[column_name]
         assert isinstance(text, list), f"Expected list, got {type(text)}"
         assert isinstance(text[0], list), f"Expected list of lists, got {type(text[0])}"
-        assert isinstance(text[0][0], str), (
-            f"Expected list of lists of strings, got {type(text[0][0])}"
-        )
+        assert isinstance(
+            text[0][0], str
+        ), f"Expected list of lists of strings, got {type(text[0][0])}"
 
         # Concatenate text with EOS tokens between entries
         full_text = tokenizer.eos_token.join(
@@ -115,9 +115,9 @@ def tokenize_and_concatenate(
         tokens = tokens[tokens != tokenizer.pad_token_id]
         num_tokens = len(tokens)
 
-        assert num_tokens > seq_len, (
-            f"Num tokens: {num_tokens} is less than seq_len: {seq_len}"
-        )
+        assert (
+            num_tokens > seq_len
+        ), f"Num tokens: {num_tokens} is less than seq_len: {seq_len}"
         logging.info(f"Num tokens: {num_tokens}")
 
         # Create batches of tokens of length seq_len
@@ -199,7 +199,7 @@ def stream_tokens(ds_cfg: DatasetConfig = ds_cfg):
         column_name=ds_cfg.dataset_column_name,
     )
 
-    dataset_iter = dataset_iter.batch(ds_cfg.stream_batch_size_samples)
+    dataset_iter = dataset_iter.batch(ds_cfg.dataset_entry_size_samples)
 
     for batch in dataset_iter:
         yield batch["tokens"].to(dtype=torch.int32, device="cpu")
@@ -225,7 +225,7 @@ def stream_fake_tokens(ds_cfg: DatasetConfig = ds_cfg) -> Iterator[torch.Tensor]
     # Generate random tokens in the same shape as expected from real data
     while True:
         # Shape: [buffer_size_samples, target_ctx_len_toks]
-        batch_shape = (ds_cfg.stream_batch_size_samples, ds_cfg.target_ctx_len_toks)
+        batch_shape = (ds_cfg.dataset_entry_size_samples, ds_cfg.target_ctx_len_toks)
 
         # Generate random token IDs within vocabulary range
         random_tokens = torch.randint(

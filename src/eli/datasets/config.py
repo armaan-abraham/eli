@@ -12,7 +12,7 @@ dtypes = {
 
 @dataclass
 class DatasetConfig:
-    num_samples: int = int(1e4)
+    num_samples: int = int(5e4)
     s3_bucket: str = "eli-datasets"
 
     seed: int = 42
@@ -26,25 +26,25 @@ class DatasetConfig:
     target_model_name: str = "EleutherAI/pythia-14m"
     vocab_size_target: int = 50304
     target_acts_collect_len_toks: int = 1
-    target_ctx_len_toks: int = 8
+    target_ctx_len_toks: int = 64
     target_generation_len_toks: int = 2
 
-    target_model_batch_size_samples: int = 16  # Per device
+    target_model_batch_size_samples: int = 512  # Per device
 
-    max_shard_size_bytes: int = 1024**2 * 100
+    max_shard_size_bytes: int = 1024**2
 
     # Size of each atom returned by target data stream
-    stream_batch_size_samples: int = 64
+    dataset_entry_size_samples: int = 8192
 
     target_model_act_dim: int = 128
 
-    _device_str: str = "cpu"
-    _dtype_str: str = "float32"
+    _device_str: str = "cuda"
+    _dtype_str: str = "float16"
 
-    _act_storage_dtype_str: str = "float32"
+    _act_storage_dtype_str: str = "float16"
 
     site: str = "resid_post"
-    layer: int = 1
+    layer: int = 5
 
     @property
     def device(self) -> torch.device:

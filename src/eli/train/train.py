@@ -5,8 +5,10 @@ import os
 from typing import Tuple
 
 import boto3
+import einops
 import torch
 import torch.distributed as dist
+import wandb
 from dacite import from_dict
 from jaxtyping import Int
 from torch import Tensor
@@ -15,7 +17,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-import wandb
 from eli.datasets.config import DatasetConfig
 from eli.train.config import TrainConfig, encoder_cfg, train_cfg
 from eli.train.download import download_dataset
@@ -25,6 +26,7 @@ from eli.train.encoder import EncoderDecoder, get_loss, get_loss_control
 def preprocess_target_generated_tokens(
     target_generated_tokens: Int[Tensor, "batch tok"], tokenizer: AutoTokenizer
 ) -> Tuple[Int[Tensor, "batch tok"], Int[Tensor, "batch tok"]]:
+    device = target_generated_tokens.device
     decoded = tokenizer.batch_decode(
         sequences=target_generated_tokens,
         skip_special_tokens=True,
@@ -34,8 +36,8 @@ def preprocess_target_generated_tokens(
     encoded = tokenizer(
         decoded, add_special_tokens=False, return_tensors="pt", padding=True
     )
-    target_generated_tokens = encoded.input_ids
-    attention_mask = encoded.attention_mask
+    target_generated_tokens = encoded.input_ids.to(device)
+    attention_mask = encoded.attention_mask.to(device)
     return target_generated_tokens, attention_mask
 
 
@@ -152,9 +154,9 @@ def train():
 
     # Get dataset config from S3
     dataset_cfg = pull_dataset_config(train_cfg)
-    assert dataset_cfg.num_samples >= train_cfg.num_samples, (
-        "Must have at least as many samples as requested"
-    )
+    assert (
+        dataset_cfg.num_samples >= train_cfg.num_samples
+    ), "Must have at least as many samples as requested"
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(train_cfg.decoder_model_name)
@@ -182,13 +184,13 @@ def train():
     )
 
     # Initialize data loader
-    data_loader = iter(download_dataset(train_cfg))
+    data_loader = iter(download_dataset(dataset_cfg, train_cfg))
 
     # Set up gradient scaler for mixed precision
     loss_scaler = GradScaler()
 
     # Calculate number of training iterations
-    combined_batch_size = train_cfg.dataset_loader_batch_size * world_size
+    combined_batch_size = train_cfg.dataset_loader_batch_size_samples * world_size
     num_batches = train_cfg.num_samples // combined_batch_size
 
     # Initialize Wandb
@@ -201,16 +203,27 @@ def train():
 
     # ----- Training loop -----
     try:
-        for train_iter in tqdm(range(num_batches), desc="Training"):
+        if rank == 0:
+            # Only show progress bar on main process
+            iterator = tqdm(range(num_batches), desc="Training")
+        else:
+            # Other processes use regular range without progress bar
+            iterator = range(num_batches)
+
+        for train_iter in iterator:
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
+
+            print(f"Target acts shape: {target_acts.shape}")
+            print(f"Target generated tokens shape: {target_generated_tokens.shape}")
+
             target_acts = target_acts.to(
                 torch.float32
             )  # Activations may have been stored as smaller dtype
             assert (
                 target_acts.shape[0]
                 == target_generated_tokens.shape[0]
-                == train_cfg.dataset_loader_batch_size
+                == train_cfg.dataset_loader_batch_size_samples
             )
             target_acts, target_generated_tokens = (
                 target_acts.to(device),

@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import asdict
 
 import boto3
@@ -24,11 +25,14 @@ def create_and_upload_shards(
         f"pipe:cat - | aws s3 cp - s3://{ds_cfg.s3_bucket}/datasets/{dataset_name}/%08d.tar",
         maxsize=ds_cfg.max_shard_size_bytes,
     )
-
-    progress_bar = tqdm(total=ds_cfg.num_samples, desc="Processing samples")
+    progress_bar = tqdm(
+        total=ds_cfg.num_samples, desc="Processing samples", unit="samples"
+    )
 
     total_samples = 0
-    done = False
+    batch_idx = 0
+
+    total_bytes = 0
 
     for tensor_dict in tensor_batch_iterator:
         # Get batch size from the first tensor
@@ -37,38 +41,36 @@ def create_and_upload_shards(
 
         first_tensor = tensor_dict[table_names[0]]
         batch_size = first_tensor.shape[0]
+        print(f"Batch size: {batch_size}")
 
         for table_name, tensor in tensor_dict.items():
-            assert tensor.shape[0] == batch_size, (
-                f"Batch size mismatch for table {table_name}"
-            )
+            assert (
+                tensor.shape[0] == batch_size
+            ), f"Batch size mismatch for table {table_name}"
 
-        # Process each sample in the batch
-        for sample_idx in range(batch_size):
-            sample_dict = {
-                "__key__": f"sample_{total_samples:08d}",
-            }
+        # Write the entire batch at once
+        sample_dict = {
+            "__key__": f"sample_{batch_idx:08d}",
+        }
 
-            # Process each table tensor for this sample
-            for table_name, tensor in tensor_dict.items():
-                # Extract the sample from the batch tensor
-                sample_tensor = tensor[sample_idx]
-                sample_dict[f"{table_name}.pth"] = sample_tensor
+        # Add each tensor as a batch
+        for table_name, tensor in tensor_dict.items():
+            tensor_size_bytes = tensor.element_size() * tensor.numel()
+            total_bytes += tensor_size_bytes
+            sample_dict[f"{table_name}.pth"] = tensor
 
-            writer.write(sample_dict)
+        writer.write(sample_dict)
 
-            # Update tracking
-            total_samples += 1
+        # Update tracking
+        total_samples += batch_size
+        batch_idx += 1
 
-            # Update progress bar
-            progress_bar.update(1)
+        # Update progress bar with bytes information
+        progress_bar.set_postfix(processed_bytes=f"{total_bytes/1024**2:.2f} MB")
+        progress_bar.update(batch_size)
 
-            # Check if we've reached the desired number of samples
-            if total_samples >= ds_cfg.num_samples:
-                done = True
-                break
-
-        if done:
+        # Check if we've reached the desired number of samples
+        if total_samples >= ds_cfg.num_samples:
             break
 
     writer.close()

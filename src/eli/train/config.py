@@ -4,22 +4,24 @@ from typing import Optional
 
 import torch
 
+from eli.datasets.config import DatasetConfig
+
 SAVE_DIR = Path(__file__).parent / "saved_models"
 
 
 @dataclass
 class TrainConfig:
     s3_bucket: str = "eli-datasets"
-    dataset_name: str = "test"
+    dataset_name: str = "EleutherAI-pythia-14m-resid_post-5"
 
-    num_samples: int = int(1e2)
+    num_samples: int = int(5e4)
 
     seed: int = 42
 
     wandb_enabled: bool = False
 
-    dataset_loader_batch_size: int = 10
-    dataset_loader_shuffle_buffer_size_batch_size_mult: int = 5
+    dataset_loader_batch_size_samples: int = 256
+    dataset_loader_shuffle_buffer_size_wds_entries: int = 10
 
     decoder_model_name: str = "EleutherAI/pythia-14m"
     decoder_model_embed_dim: int = 128
@@ -29,13 +31,6 @@ class TrainConfig:
     save_encoder_path: Optional[Path] = None
 
     log_loss_control_every_n_iter: int = 2
-
-    @property
-    def dataset_loader_shuffle_buffer_size(self) -> int:
-        return int(
-            self.dataset_loader_batch_size
-            * self.dataset_loader_shuffle_buffer_size_batch_size_mult
-        )
 
     @property
     def dtype(self) -> torch.dtype:
