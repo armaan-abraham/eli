@@ -60,6 +60,8 @@ colorama==0.4.6
 comm==0.2.2
     # via ipykernel
     # via ipywidgets
+dacite==1.9.2
+    # via eli
 datasets==3.6.0
     # via eli
     # via transformer-lens
