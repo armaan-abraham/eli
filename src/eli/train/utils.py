@@ -88,7 +88,7 @@ def print_gpu_memory_usage():
         )
 
 
-def calculate_gini(logits: Float[torch.Tensor, "batch tok vocab"]) -> float:
+def calculate_logits_gini(logits: Float[torch.Tensor, "batch tok vocab"]) -> float:
     """Calculate the average Gini coefficient of probabilities over the vocab dimension.
 
     Args:

@@ -1,0 +1,66 @@
+from dataclasses import dataclass
+
+import torch
+import transformer_lens
+
+dtypes = {
+    "bfloat16": torch.bfloat16,
+    "float32": torch.float32,
+    "float16": torch.float16,
+}
+
+
+@dataclass
+class DatasetConfig:
+    num_samples: int = int(5e4)
+    s3_bucket: str = "eli-datasets"
+
+    seed: int = 42
+
+    use_fake_tokens: bool = False
+
+    dataset_name: str = "allenai/c4"
+    dataset_column_name: str = "text"
+    dataset_batch_size_entries: int = 20
+
+    target_model_name: str = "EleutherAI/pythia-14m"
+    vocab_size_target: int = 50304
+    target_acts_collect_len_toks: int = 1
+    target_ctx_len_toks: int = 64
+    target_generation_len_toks: int = 2
+
+    target_model_batch_size_samples: int = 512  # Per device
+
+    max_shard_size_bytes: int = 1024**3
+
+    # Size of each atom returned by target data stream
+    dataset_entry_size_samples: int = 8192
+
+    target_model_act_dim: int = 128
+
+    _device_str: str = "cuda"
+    _dtype_str: str = "float16"
+
+    _act_storage_dtype_str: str = "float16"
+
+    site: str = "resid_post"
+    layer: int = 5
+
+    @property
+    def device(self) -> torch.device:
+        return torch.device(self._device_str)
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return dtypes[self._dtype_str]
+
+    @property
+    def act_storage_dtype(self) -> torch.dtype:
+        return dtypes[self._act_storage_dtype_str]
+
+    @property
+    def act_name(self) -> str:
+        return transformer_lens.utils.get_act_name(self.site, self.layer)
+
+
+ds_cfg = DatasetConfig()
