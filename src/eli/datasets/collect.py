@@ -1,16 +1,11 @@
-import argparse
-
+from eli.datasets.config import ds_cfg
 from eli.datasets.target import stream_target_data
 from eli.datasets.tokens import stream_tokens
 from eli.datasets.upload import create_and_upload_shards, upload_dataset_config
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("dataset_name", type=str)
-    args = parser.parse_args()
-
-    dataset_name = args.dataset_name
+    dataset_name = f"{ds_cfg.target_model_name}-{ds_cfg.site}-{ds_cfg.layer}"
 
     # Collect tokens
     token_stream = stream_tokens()

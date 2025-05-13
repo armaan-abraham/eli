@@ -204,7 +204,9 @@ def train():
         for train_iter in tqdm(range(num_batches), desc="Training"):
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
-            target_acts = target_acts.to(torch.float32) # Activations may have been stored as smaller dtype
+            target_acts = target_acts.to(
+                torch.float32
+            )  # Activations may have been stored as smaller dtype
             assert (
                 target_acts.shape[0]
                 == target_generated_tokens.shape[0]
