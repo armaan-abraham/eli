@@ -2,6 +2,9 @@ import os
 import requests
 import argparse
 
+"""
+Call this script after long running job to delete the vast instance and save money :D
+"""
 
 vast_instance_id = os.environ["VAST_CONTAINERLABEL"].split("C.")[1]
 bearer_token = os.environ["VAST_BEARER_TOKEN"]
