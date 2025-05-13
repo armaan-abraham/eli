@@ -1,8 +1,8 @@
+import datetime
 import gc
 import json
 import os
 from typing import Tuple
-import datetime
 
 import boto3
 import torch
@@ -111,11 +111,11 @@ def init_distributed():
         dist.init_process_group(backend="gloo")
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         device = torch.device("cpu")
-    
+
     # Get world size and rank
     world_size = dist.get_world_size()
     rank = dist.get_rank()
-    
+
     return world_size, rank, local_rank, device
 
 
@@ -152,16 +152,18 @@ def train():
 
     # Get dataset config from S3
     dataset_cfg = pull_dataset_config(train_cfg)
-    assert (
-        dataset_cfg.num_samples >= train_cfg.num_samples
-    ), "Must have at least as many samples as requested"
+    assert dataset_cfg.num_samples >= train_cfg.num_samples, (
+        "Must have at least as many samples as requested"
+    )
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(train_cfg.decoder_model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
     # Initialize model
-    encoder_decoder = EncoderDecoder(tokenizer, dataset_cfg, encoder_cfg, train_cfg).to(device)
+    encoder_decoder = EncoderDecoder(tokenizer, dataset_cfg, encoder_cfg, train_cfg).to(
+        device
+    )
     assert encoder_decoder.encoder.get_device() == device
     assert encoder_decoder.decoder.device == device
 
@@ -171,7 +173,7 @@ def train():
     else:
         # For CPU, don't specify device_ids
         encoder_decoder_ddp = DDP(encoder_decoder)
-        
+
     optimizer = torch.optim.AdamW(
         [param for param in encoder_decoder.parameters() if param.requires_grad],
         lr=encoder_cfg.lr,
@@ -202,7 +204,11 @@ def train():
         for train_iter in tqdm(range(num_batches), desc="Training"):
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
-            assert target_acts.shape[0] == target_generated_tokens.shape[0] == train_cfg.dataset_loader_batch_size
+            assert (
+                target_acts.shape[0]
+                == target_generated_tokens.shape[0]
+                == train_cfg.dataset_loader_batch_size
+            )
             target_acts, target_generated_tokens = (
                 target_acts.to(device),
                 target_generated_tokens.to(device),
@@ -263,29 +269,10 @@ def train():
                 torch.cuda.empty_cache()
 
     finally:
-        # ------------------------------------------------------------------
-        # Gracefully close the data-loader so that all background workers
-        # (and their gopen pipes) terminate before Python leaves.
-        # ------------------------------------------------------------------
-        try:
-            if "data_loader" in locals():
-                # `iter(loader)` returns a DataLoader *iterator* whose private
-                # method `_shutdown_workers()` stops the worker processes.
-                if hasattr(data_loader, "_shutdown_workers"):
-                    data_loader._shutdown_workers()
-
-                # WebDataset itself may still hold open streams; close them too
-                if hasattr(data_loader, "dataset") and hasattr(data_loader.dataset, "close"):
-                    data_loader.dataset.close()
-        except Exception as e:
-            print(f"Failed to close dataset cleanly: {e}")
-
         if train_cfg.save_encoder_path and rank == 0:
             save_encoder(encoder_decoder.module, train_cfg.save_encoder_path)
-        
+
         dist.destroy_process_group()
 
         if train_cfg.wandb_enabled:
             wandb.finish()
-
-

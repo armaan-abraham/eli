@@ -36,7 +36,7 @@ class TrainConfig:
             self.dataset_loader_batch_size
             * self.dataset_loader_shuffle_buffer_size_batch_size_mult
         )
-    
+
     @property
     def dtype(self) -> torch.dtype:
         if torch.cuda.is_available():

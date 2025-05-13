@@ -18,6 +18,33 @@ def load_tokenizer():
     return tokenizer
 
 
+def filter_empty_generations(
+    tokenizer: AutoTokenizer,
+    target_generated_tokens: torch.Tensor,
+    target_acts: torch.Tensor,
+):
+    eos_token = tokenizer.eos_token_id
+    print(f"Number of samples before filtering: {target_generated_tokens.shape[0]}")
+
+    # Filter out rows with only EOS tokens
+    eos_mask = torch.any(target_generated_tokens != eos_token, dim=1)
+    filtered_tokens = target_generated_tokens[eos_mask]
+    filtered_acts = target_acts[eos_mask]
+
+    # Filter out rows with only whitespace
+    # Use batch_decode for efficiency and check each text for non-whitespace content
+    decoded_texts = tokenizer.batch_decode(filtered_tokens)
+    content_mask = torch.tensor(
+        [len(text.strip()) > 0 for text in decoded_texts], dtype=torch.bool
+    )
+
+    target_generated_tokens = filtered_tokens[content_mask]
+    target_acts = filtered_acts[content_mask]
+
+    print(f"Number of samples after filtering: {target_generated_tokens.shape[0]}")
+    return target_generated_tokens, target_acts
+
+
 def process_tokens_with_model(
     batch_toks: torch.Tensor,
     batch_start: int,
@@ -290,10 +317,16 @@ class TargetDataStream:
         # Wait for all tasks to complete and check for errors
         self._wait_for_workers(submitted_tasks)
 
+        target_acts, target_generated_tokens = filter_empty_generations(
+            self.tokenizer,
+            self.target_generated_tokens.clone(),
+            self.target_acts.clone(),
+        )
+
         # Return the processed data
         return {
-            "target_acts": self.target_acts.clone(),
-            "target_generated_tokens": self.target_generated_tokens.clone(),
+            "target_acts": target_acts,
+            "target_generated_tokens": target_generated_tokens,
         }
 
     def _wait_for_workers(self, expected_tasks=None):

@@ -38,6 +38,11 @@ def create_and_upload_shards(
         first_tensor = tensor_dict[table_names[0]]
         batch_size = first_tensor.shape[0]
 
+        for table_name, tensor in tensor_dict.items():
+            assert tensor.shape[0] == batch_size, (
+                f"Batch size mismatch for table {table_name}"
+            )
+
         # Process each sample in the batch
         for sample_idx in range(batch_size):
             sample_dict = {

@@ -173,9 +173,13 @@ class MLP(torch.nn.Module):
         self.encoder_cfg = encoder_cfg
 
         # Initialize input and output projections
-        self.W_in = torch.nn.Parameter(torch.empty(self.encoder_cfg.d_mlp, self.encoder_cfg.d_model))
+        self.W_in = torch.nn.Parameter(
+            torch.empty(self.encoder_cfg.d_mlp, self.encoder_cfg.d_model)
+        )
         self.b_in = torch.nn.Parameter(torch.zeros(self.encoder_cfg.d_mlp))
-        self.W_out = torch.nn.Parameter(torch.empty(self.encoder_cfg.d_model, self.encoder_cfg.d_mlp))
+        self.W_out = torch.nn.Parameter(
+            torch.empty(self.encoder_cfg.d_model, self.encoder_cfg.d_mlp)
+        )
         self.b_out = torch.nn.Parameter(torch.zeros(self.encoder_cfg.d_model))
 
         # Initialize weights with Kaiming initialization
@@ -241,7 +245,9 @@ class Encoder(torch.nn.Module):
         self.multiplex_heads = torch.nn.ModuleList(
             [
                 torch.nn.Linear(
-                    dataset_cfg.target_model_act_dim * dataset_cfg.target_acts_collect_len_toks, encoder_cfg.d_model
+                    dataset_cfg.target_model_act_dim
+                    * dataset_cfg.target_acts_collect_len_toks,
+                    encoder_cfg.d_model,
                 )
                 for _ in range(encoder_cfg.encoding_len_toks)
             ]
@@ -354,7 +360,11 @@ class EncoderDecoder(torch.nn.Module):
         Returns:
             Tuple of (decoder logits for target tokens, decoder logits for encoding tokens, virtual embeddings)
         """
-        assert target_acts.shape[0] == target_generated_tokens.shape[0] == attention_mask.shape[0]
+        assert (
+            target_acts.shape[0]
+            == target_generated_tokens.shape[0]
+            == attention_mask.shape[0]
+        )
         assert target_acts.ndim == 3
         assert target_generated_tokens.ndim == 2
         assert target_acts.shape[1] == self.dataset_cfg.target_acts_collect_len_toks
