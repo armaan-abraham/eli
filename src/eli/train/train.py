@@ -99,15 +99,24 @@ def get_gradient_stats(parameters):
 
 
 def init_distributed():
-    # Initialize the process group
-    dist.init_process_group(backend="nccl")
+    # Check if CUDA is available
+    if torch.cuda.is_available():
+        # Initialize the process group with NCCL backend for GPU
+        dist.init_process_group(backend="nccl")
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+    else:
+        # Initialize with gloo backend for CPU
+        dist.init_process_group(backend="gloo")
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        device = torch.device("cpu")
+    
     # Get world size and rank
     world_size = dist.get_world_size()
     rank = dist.get_rank()
-    # Set device for this process
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
-    return world_size, rank, local_rank
+    
+    return world_size, rank, local_rank, device
 
 
 def pull_dataset_config(train_cfg: TrainConfig) -> DatasetConfig:
@@ -139,23 +148,30 @@ def pull_dataset_config(train_cfg: TrainConfig) -> DatasetConfig:
 
 def train():
     # ----- Setup -----
-    world_size, rank, local_rank = init_distributed()
-    device = torch.device(f"cuda:{local_rank}")
+    world_size, rank, local_rank, device = init_distributed()
 
     # Get dataset config from S3
     dataset_cfg = pull_dataset_config(train_cfg)
+    assert (
+        dataset_cfg.num_samples >= train_cfg.num_samples
+    ), "Must have at least as many samples as requested"
 
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(train_cfg.decoder_model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
-    # Initialize model with DDP
-    encoder_decoder = EncoderDecoder(tokenizer, dataset_cfg, encoder_cfg, train_cfg).to(
-        device
-    )
+    # Initialize model
+    encoder_decoder = EncoderDecoder(tokenizer, dataset_cfg, encoder_cfg, train_cfg).to(device)
     assert encoder_decoder.encoder.device == device
     assert encoder_decoder.decoder.device == device
-    encoder_decoder_ddp = DDP(encoder_decoder, device_ids=[local_rank])
+
+    # Set up DDP for both CPU and GPU
+    if device.type == "cuda":
+        encoder_decoder_ddp = DDP(encoder_decoder, device_ids=[local_rank])
+    else:
+        # For CPU, don't specify device_ids
+        encoder_decoder_ddp = DDP(encoder_decoder)
+        
     optimizer = torch.optim.AdamW(
         [param for param in encoder_decoder.parameters() if param.requires_grad],
         lr=encoder_cfg.lr,
@@ -234,7 +250,8 @@ def train():
 
             del target_acts, target_generated_tokens, attention_mask, loss
             gc.collect()
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     finally:
         if train_cfg.save_encoder_path and rank == 0:

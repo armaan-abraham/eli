@@ -22,7 +22,7 @@ class TrainConfig:
     decoder_model_name: str = "EleutherAI/pythia-14m"
     decoder_model_embed_dim: int = 128
 
-    dtype: torch.dtype = torch.float16  # For autocast
+    _dtype: torch.dtype = torch.float16  # For autocast
 
     save_encoder_path: Optional[Path] = None
 
@@ -34,6 +34,13 @@ class TrainConfig:
             self.dataset_loader_batch_size
             * self.dataset_loader_shuffle_buffer_size_batch_size_mult
         )
+    
+    @property
+    def dtype(self) -> torch.dtype:
+        if torch.cuda.is_available():
+            return self._dtype
+        else:
+            return torch.float32
 
 
 train_cfg = TrainConfig()
