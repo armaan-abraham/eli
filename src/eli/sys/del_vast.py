@@ -1,5 +1,6 @@
 import os
 import requests
+import argparse
 
 
 vast_instance_id = os.environ["VAST_CONTAINERLABEL"].split("C.")[1]
@@ -15,4 +16,3 @@ headers = {
 
 response = requests.request("DELETE", url, headers=headers, data=payload)
 
-print(response.text)
