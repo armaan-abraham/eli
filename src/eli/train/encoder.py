@@ -1,3 +1,4 @@
+import einops
 import torch
 from einops import einsum
 from jaxtyping import Float, Int
@@ -7,7 +8,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from eli.datasets.config import DatasetConfig
 from eli.train.config import EncoderConfig, TrainConfig, encoder_cfg, train_cfg
-from eli.utils import log_decoded_tokens
+from eli.train.utils import log_decoded_tokens
 
 PROMPT_DECODER = """## role:system
 You are going to follow the instructions EXACTLY. Your task is simply to REPEAT
@@ -74,18 +75,11 @@ def prepend_bos_token(toks: Int[Tensor, "batch tok"], tokenizer: AutoTokenizer):
 
 
 class Attention(torch.nn.Module):
-    """Multi-head attention module with separate Q, K, V projections."""
-
-    def __init__(self, cfg: EncoderConfig):
-        """Initialize attention module.
-
-        Args:
-            cfg: Configuration parameters for the encoder
-        """
+    def __init__(self, encoder_cfg: EncoderConfig):
         super().__init__()
-        self.d_model = cfg.d_model
-        self.d_head = cfg.d_head
-        self.n_heads = cfg.n_heads
+        self.d_model = encoder_cfg.d_model
+        self.d_head = encoder_cfg.d_head
+        self.n_heads = encoder_cfg.n_heads
 
         # Initialize projection matrices and biases
         self.W_Q = torch.nn.Parameter(
@@ -114,14 +108,6 @@ class Attention(torch.nn.Module):
     def forward(
         self, x: Float[Tensor, "batch tok d_model"]
     ) -> Float[Tensor, "batch tok d_model"]:
-        """Forward pass for attention.
-
-        Args:
-            x: Input tensor with shape [batch, token, d_model]
-
-        Returns:
-            Output tensor with shape [batch, token, d_model]
-        """
         # Project inputs to queries, keys, and values
         Q = (
             einsum(
@@ -182,22 +168,15 @@ class Attention(torch.nn.Module):
 
 
 class MLP(torch.nn.Module):
-    """Multi-layer perceptron with GELU activation."""
-
-    def __init__(self, cfg: EncoderConfig):
-        """Initialize MLP module.
-
-        Args:
-            cfg: Configuration parameters for the encoder
-        """
+    def __init__(self, encoder_cfg: EncoderConfig):
         super().__init__()
-        self.cfg = cfg
+        self.encoder_cfg = encoder_cfg
 
         # Initialize input and output projections
-        self.W_in = torch.nn.Parameter(torch.empty(self.cfg.d_mlp, self.cfg.d_model))
-        self.b_in = torch.nn.Parameter(torch.zeros(self.cfg.d_mlp))
-        self.W_out = torch.nn.Parameter(torch.empty(self.cfg.d_model, self.cfg.d_mlp))
-        self.b_out = torch.nn.Parameter(torch.zeros(self.cfg.d_model))
+        self.W_in = torch.nn.Parameter(torch.empty(self.encoder_cfg.d_mlp, self.encoder_cfg.d_model))
+        self.b_in = torch.nn.Parameter(torch.zeros(self.encoder_cfg.d_mlp))
+        self.W_out = torch.nn.Parameter(torch.empty(self.encoder_cfg.d_model, self.encoder_cfg.d_mlp))
+        self.b_out = torch.nn.Parameter(torch.zeros(self.encoder_cfg.d_model))
 
         # Initialize weights with Kaiming initialization
         init.kaiming_normal_(self.W_in)
@@ -206,14 +185,6 @@ class MLP(torch.nn.Module):
     def forward(
         self, x: Float[Tensor, "batch tok d_model"]
     ) -> Float[Tensor, "batch tok d_model"]:
-        """Forward pass for MLP.
-
-        Args:
-            x: Input tensor with shape [batch, token, d_model]
-
-        Returns:
-            Output tensor with shape [batch, token, d_model]
-        """
         # Project to hidden dimension
         acts = (
             einsum(x, self.W_in, "batch tok d_model, d_mlp d_model -> batch tok d_mlp")
@@ -232,32 +203,17 @@ class MLP(torch.nn.Module):
 
 
 class TransformerBlock(torch.nn.Module):
-    """Transformer block with pre-normalization."""
-
-    def __init__(self, cfg: EncoderConfig):
-        """Initialize transformer block.
-
-        Args:
-            cfg: Configuration parameters for the encoder
-        """
+    def __init__(self, encoder_cfg: EncoderConfig):
         super().__init__()
 
-        self.layernorm_1 = torch.nn.LayerNorm(cfg.d_model)
-        self.attention = Attention(cfg)
-        self.layernorm_2 = torch.nn.LayerNorm(cfg.d_model)
-        self.mlp = MLP(cfg)
+        self.layernorm_1 = torch.nn.LayerNorm(encoder_cfg.d_model)
+        self.attention = Attention(encoder_cfg)
+        self.layernorm_2 = torch.nn.LayerNorm(encoder_cfg.d_model)
+        self.mlp = MLP(encoder_cfg)
 
     def forward(
         self, x: Float[Tensor, "batch tok d_model"]
     ) -> Float[Tensor, "batch tok d_model"]:
-        """Forward pass for transformer block.
-
-        Args:
-            x: Input tensor with shape [batch, token, d_model]
-
-        Returns:
-            Output tensor with shape [batch, token, d_model]
-        """
         # Apply attention with residual connection
         x_ln = self.layernorm_1(x)
         x_attn_resid = self.attention(x_ln) + x
@@ -270,20 +226,12 @@ class TransformerBlock(torch.nn.Module):
 
 
 class Encoder(torch.nn.Module):
-    """Encoder that maps target model activations to decoder embeddings."""
-
     def __init__(
         self,
         dataset_cfg: DatasetConfig,
         train_cfg: TrainConfig,
         encoder_cfg: EncoderConfig,
     ):
-        """Initialize encoder.
-
-        Args:
-            cfg: Global configuration parameters
-            encoder_cfg: Configuration parameters for the encoder
-        """
         super().__init__()
         self.train_cfg = train_cfg
         self.encoder_cfg = encoder_cfg
@@ -293,7 +241,7 @@ class Encoder(torch.nn.Module):
         self.multiplex_heads = torch.nn.ModuleList(
             [
                 torch.nn.Linear(
-                    dataset_cfg.target_model_agg_acts_dim, encoder_cfg.d_model
+                    dataset_cfg.target_model_act_dim * dataset_cfg.target_acts_collect_len_toks, encoder_cfg.d_model
                 )
                 for _ in range(encoder_cfg.encoding_len_toks)
             ]
@@ -322,16 +270,10 @@ class Encoder(torch.nn.Module):
             init.zeros_(head.bias)
 
     def forward(
-        self, x: Float[Tensor, "batch d_in"]
-    ) -> Float[Tensor, "batch tok d_embed"]:
-        """Forward pass for encoder.
+        self, x: Float[Tensor, "batch tok d_target_model"]
+    ) -> Float[Tensor, "batch tok d_decoder_model"]:
+        x = einops.rearrange(x, "batch tok d_model -> batch (tok d_model)")
 
-        Args:
-            x: Input tensor with shape [batch, d_in]
-
-        Returns:
-            Output tensor with shape [batch, tok, d_embed]
-        """
         # Apply multiplex heads to create a sequence of tokens
         x_toks = torch.stack(
             [head(x) for head in self.multiplex_heads], dim=1
@@ -364,6 +306,9 @@ class Encoder(torch.nn.Module):
 
         return x_out
 
+    def get_device(self) -> torch.device:
+        return next(self.parameters()).device
+
 
 class EncoderDecoder(torch.nn.Module):
     """Combined encoder-decoder model that maps target activations to text."""
@@ -375,13 +320,6 @@ class EncoderDecoder(torch.nn.Module):
         encoder_cfg: EncoderConfig = encoder_cfg,
         train_cfg: TrainConfig = train_cfg,
     ):
-        """Initialize encoder-decoder.
-
-        Args:
-            cfg: Global configuration parameters
-            encoder_cfg: Configuration parameters for the encoder
-            tokenizer: Tokenizer for the decoder model
-        """
         super().__init__()
         self.tokenizer = tokenizer
         self.dataset_cfg = dataset_cfg
@@ -400,7 +338,7 @@ class EncoderDecoder(torch.nn.Module):
 
     def forward(
         self,
-        target_acts: Float[Tensor, "batch d_model"],
+        target_acts: Float[Tensor, "batch tok d_model"],
         target_generated_tokens: Int[Tensor, "batch tok"],
         attention_mask: Int[Tensor, "batch tok"],
         # encoder_output_logits: Float[Tensor, "batch tok vocab"] | None = None,
@@ -416,6 +354,12 @@ class EncoderDecoder(torch.nn.Module):
         Returns:
             Tuple of (decoder logits for target tokens, decoder logits for encoding tokens, virtual embeddings)
         """
+        assert target_acts.shape[0] == target_generated_tokens.shape[0] == attention_mask.shape[0]
+        assert target_acts.ndim == 3
+        assert target_generated_tokens.ndim == 2
+        assert target_acts.shape[1] == self.dataset_cfg.target_acts_collect_len_toks
+        assert target_acts.shape[2] == self.dataset_cfg.target_model_act_dim
+
         # Generate virtual embeddings with the encoder
         virtual_embeddings = self.encoder(target_acts)  # [batch tok d_embed]
 
@@ -439,7 +383,7 @@ class EncoderDecoder(torch.nn.Module):
         # Extract encoding logits (for regularization)
         prefix_len = fixed_token_lens["prefix_tokens_len"]
         decoder_logits_encoding_tokens = decoder_logits[
-            :, prefix_len - 1 : (prefix_len + self.cfg.encoding_len_toks) - 1, :
+            :, prefix_len - 1 : (prefix_len + self.encoder_cfg.encoding_len_toks) - 1, :
         ]
 
         return (

@@ -17,3 +17,5 @@ wandb/
 .env
 
 .DS_Store
+
+decoded_tokens*

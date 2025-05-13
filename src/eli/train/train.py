@@ -2,6 +2,7 @@ import gc
 import json
 import os
 from typing import Tuple
+import datetime
 
 import boto3
 import torch
@@ -22,19 +23,18 @@ from eli.train.encoder import EncoderDecoder, get_loss, get_loss_control
 
 
 def preprocess_target_generated_tokens(
-    self, target_generated_tokens: Int[Tensor, "batch tok"]
+    target_generated_tokens: Int[Tensor, "batch tok"], tokenizer: AutoTokenizer
 ) -> Tuple[Int[Tensor, "batch tok"], Int[Tensor, "batch tok"]]:
-    decoded = self.tokenizer.batch_decode(
+    decoded = tokenizer.batch_decode(
         sequences=target_generated_tokens,
         skip_special_tokens=True,
         clean_up_tokenization_spaces=True,
     )
     decoded = [r.strip() for r in decoded]
-    encoded = self.tokenizer(
+    encoded = tokenizer(
         decoded, add_special_tokens=False, return_tensors="pt", padding=True
     )
     target_generated_tokens = encoded.input_ids
-    print(f"Target generated tokens shape: {target_generated_tokens.shape}")
     attention_mask = encoded.attention_mask
     return target_generated_tokens, attention_mask
 
@@ -162,7 +162,7 @@ def train():
 
     # Initialize model
     encoder_decoder = EncoderDecoder(tokenizer, dataset_cfg, encoder_cfg, train_cfg).to(device)
-    assert encoder_decoder.encoder.device == device
+    assert encoder_decoder.encoder.get_device() == device
     assert encoder_decoder.decoder.device == device
 
     # Set up DDP for both CPU and GPU
@@ -186,14 +186,23 @@ def train():
     loss_scaler = GradScaler()
 
     # Calculate number of training iterations
-    combined_batch_size = train_cfg.train_batch_size_samples * world_size
+    combined_batch_size = train_cfg.dataset_loader_batch_size * world_size
     num_batches = train_cfg.num_samples // combined_batch_size
+
+    # Initialize Wandb
+    if train_cfg.wandb_enabled:
+        run_name = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{train_cfg.decoder_model_name.split('/')[-1]}"
+        wandb.init(project="eli", name=run_name)
+        wandb.config.update(train_cfg)
+        wandb.config.update(encoder_cfg)
+        wandb.config.update(dataset_cfg)
 
     # ----- Training loop -----
     try:
         for train_iter in tqdm(range(num_batches), desc="Training"):
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
+            assert target_acts.shape[0] == target_generated_tokens.shape[0] == train_cfg.dataset_loader_batch_size
             target_acts, target_generated_tokens = (
                 target_acts.to(device),
                 target_generated_tokens.to(device),
@@ -201,7 +210,7 @@ def train():
 
             # Preprocess data
             target_generated_tokens, attention_mask = (
-                preprocess_target_generated_tokens(target_generated_tokens)
+                preprocess_target_generated_tokens(target_generated_tokens, tokenizer)
             )
 
             # Update model
@@ -228,7 +237,7 @@ def train():
             loss_scaler.update()
 
             # ----- Logging -----
-            if rank == 0:
+            if rank == 0 and train_cfg.wandb_enabled:
                 log_dict = {}
                 log_dict["loss"] = loss.item()
                 log_dict.update(get_gradient_stats(encoder_decoder.parameters()))
@@ -254,5 +263,29 @@ def train():
                 torch.cuda.empty_cache()
 
     finally:
+        # ------------------------------------------------------------------
+        # Gracefully close the data-loader so that all background workers
+        # (and their gopen pipes) terminate before Python leaves.
+        # ------------------------------------------------------------------
+        try:
+            if "data_loader" in locals():
+                # `iter(loader)` returns a DataLoader *iterator* whose private
+                # method `_shutdown_workers()` stops the worker processes.
+                if hasattr(data_loader, "_shutdown_workers"):
+                    data_loader._shutdown_workers()
+
+                # WebDataset itself may still hold open streams; close them too
+                if hasattr(data_loader, "dataset") and hasattr(data_loader.dataset, "close"):
+                    data_loader.dataset.close()
+        except Exception as e:
+            print(f"Failed to close dataset cleanly: {e}")
+
         if train_cfg.save_encoder_path and rank == 0:
             save_encoder(encoder_decoder.module, train_cfg.save_encoder_path)
+        
+        dist.destroy_process_group()
+
+        if train_cfg.wandb_enabled:
+            wandb.finish()
+
+

@@ -60,7 +60,8 @@ def download_dataset(
 
     # Create WebDataset pipeline
     dataset = (
-        wds.WebDataset(url, resampled=True, nodesplitter=wds.split_by_node)
+        # Shard shuffle false because of multi node
+        wds.WebDataset(url, resampled=True, nodesplitter=wds.split_by_node, shardshuffle=False)
         .shuffle(train_cfg.dataset_loader_shuffle_buffer_size)
         .decode()
         .to_tuple("target_acts.pth", "target_generated_tokens.pth")

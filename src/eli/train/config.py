@@ -12,12 +12,14 @@ class TrainConfig:
     s3_bucket: str = "eli-datasets"
     dataset_name: str = "test"
 
-    num_samples: int = int(2e7)
+    num_samples: int = int(1e2)
 
     seed: int = 42
 
-    dataset_loader_batch_size: int = 200
-    dataset_loader_shuffle_buffer_size_batch_size_mult: int = 10
+    wandb_enabled: bool = False
+
+    dataset_loader_batch_size: int = 10
+    dataset_loader_shuffle_buffer_size_batch_size_mult: int = 5
 
     decoder_model_name: str = "EleutherAI/pythia-14m"
     decoder_model_embed_dim: int = 128
@@ -26,7 +28,7 @@ class TrainConfig:
 
     save_encoder_path: Optional[Path] = None
 
-    log_loss_control_every_n_iter: int = 100
+    log_loss_control_every_n_iter: int = 2
 
     @property
     def dataset_loader_shuffle_buffer_size(self) -> int:
