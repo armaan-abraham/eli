@@ -4,6 +4,7 @@ import json
 import os
 from typing import Tuple
 import dataclasses
+import io
 
 import boto3
 import einops
@@ -42,11 +43,12 @@ def preprocess_target_generated_tokens(
     return target_generated_tokens, attention_mask
 
 
-def save_encoder(encoder_decoder: EncoderDecoder, save_path: str):
-    """Save just the encoder part of the encoder-decoder model.
+def save_encoder(encoder_decoder: EncoderDecoder, train_cfg: TrainConfig):
+    """Save the encoder part of the encoder-decoder model.
 
     Args:
-        save_path: Path where the model should be saved
+        encoder_decoder: The encoder-decoder model
+        train_cfg: Training configuration with save paths
     """
     # Get the encoder, accounting for DataParallel
     encoder = encoder_decoder.encoder
@@ -54,12 +56,34 @@ def save_encoder(encoder_decoder: EncoderDecoder, save_path: str):
     # Move to CPU before saving
     encoder = encoder.cpu()
 
-    # Save the model
-    try:
-        torch.save(encoder.state_dict(), save_path)
-        print(f"Encoder saved to {save_path}")
-    except Exception as e:
-        print(f"Failed to save encoder: {e}")
+    # Save the model locally if path is provided
+    if train_cfg.save_encoder_path:
+        try:
+            torch.save(encoder.state_dict(), train_cfg.save_encoder_path)
+            print(f"Encoder saved to {train_cfg.save_encoder_path}")
+        except Exception as e:
+            print(f"Failed to save encoder locally: {e}")
+
+    # Save to S3 if enabled
+    if train_cfg.save_encoder_to_s3:
+        try:
+            # Create buffer to hold the model
+            buffer = io.BytesIO()
+            torch.save(encoder.state_dict(), buffer)
+            buffer.seek(0)
+            
+            # Create S3 client
+            s3_client = boto3.client("s3")
+            
+            # Create S3 key from decoder model name and dataset name
+            decoder_name = train_cfg.decoder_model_name.split('/')[-1]
+            s3_key = f"models/{train_cfg.dataset_name}-{decoder_name}-encoder.pt"
+            
+            # Upload to S3
+            s3_client.upload_fileobj(buffer, train_cfg.s3_bucket, s3_key)
+            print(f"Encoder saved to S3: s3://{train_cfg.s3_bucket}/{s3_key}")
+        except Exception as e:
+            print(f"Failed to save encoder to S3: {e}")
 
 
 def get_gradient_stats(parameters):
@@ -214,6 +238,9 @@ def train():
             iterator = range(num_batches)
 
         for train_iter in iterator:
+            if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats()
+
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
 
@@ -281,15 +308,19 @@ def train():
                     log_dict["loss_control"] = loss_control.item()
 
                 wandb.log(log_dict)
+            
+            if device.type == "cuda":
+                print(f"Rank {rank} peak memory: {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB, peak memory allocated: {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB")
 
             del target_acts, target_generated_tokens, attention_mask, loss
+             
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
     finally:
-        if train_cfg.save_encoder_path and rank == 0:
-            save_encoder(encoder_decoder.module, train_cfg.save_encoder_path)
+        if rank == 0:
+            save_encoder(encoder_decoder.module, train_cfg)
 
         dist.destroy_process_group()
 

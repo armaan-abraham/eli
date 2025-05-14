@@ -29,6 +29,7 @@ class TrainConfig:
     _dtype: torch.dtype = torch.float16  # For autocast
 
     save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
+    save_encoder_to_s3: bool = False
 
     log_loss_control_every_n_iter: int = 10
 
