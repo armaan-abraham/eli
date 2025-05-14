@@ -12,6 +12,14 @@ from eli.datasets.config import DatasetConfig, ds_cfg
 
 CPU = torch.device("cpu")
 
+"""Configure logging to output to stdout with appropriate formatting."""
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()  # Output to stdout
+    ]
+)
 
 def load_tokenizer():
     """Load the tokenizer for the target model"""
