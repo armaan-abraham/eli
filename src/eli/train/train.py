@@ -3,6 +3,7 @@ import gc
 import json
 import os
 from typing import Tuple
+import dataclasses
 
 import boto3
 import einops
@@ -194,12 +195,14 @@ def train():
     num_batches = train_cfg.num_samples // combined_batch_size
 
     # Initialize Wandb
-    if train_cfg.wandb_enabled:
+    if train_cfg.wandb_enabled and rank == 0:
         run_name = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{train_cfg.decoder_model_name.split('/')[-1]}"
         wandb.init(project="eli", name=run_name)
-        wandb.config.update(train_cfg)
-        wandb.config.update(encoder_cfg)
-        wandb.config.update(dataset_cfg)
+        wandb.config.update({
+            "train": dataclasses.asdict(train_cfg),
+            "encoder": dataclasses.asdict(encoder_cfg),
+            "dataset": dataclasses.asdict(dataset_cfg)
+        })
 
     # ----- Training loop -----
     try:

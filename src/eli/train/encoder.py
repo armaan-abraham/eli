@@ -11,60 +11,55 @@ from eli.train.config import EncoderConfig, TrainConfig, encoder_cfg, train_cfg
 from eli.train.utils import log_decoded_tokens
 
 PROMPT_DECODER = """## role:system
-You are going to follow the instructions EXACTLY. Your task is simply to REPEAT
-THE GIVEN TEXT. No commentary, no tags. Shown below are examples. You will be
-given some text, labeled "GIVEN TEXT", and you will need to repeat it exactly.
-If the given text includes spaces or special characters, you will need to repeat
-them exactly, including leading and trailing spaces.
+You predict what a target LLM will write next, given a short note of its current thought process.
+Return only the predicted text — no commentary, no tags.
 
 ## role:example
-GIVEN TEXT:
-Alice
-ANSWER:
-Alice
+THOUGHT:
+End sentence quantum entanglement definition needed finish now
+OUTPUT:
+where two or more particles share a linked quantum state such that measuring one instantly sets the state of the other, no matter how far apart they are in space.
 
 ## role:example
-GIVEN TEXT:
-nucleus
-ANSWER:
-nucleus
+THOUGHT:
+Write body fib function recursive return logic included
+OUTPUT:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
 
 ## role:example
-GIVEN TEXT:
- ..**<
-ANSWER:
- ..**<
-
-## role:example
-GIVEN TEXT:
-cular
-ANSWER:
-cular
+THOUGHT:
+Craft headline AMD RDNA4 GPU launch coverage today
+OUTPUT:
+AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
 
 ## role:test
-GIVEN TEXT:
+THOUGHT:
 <thought>
-ANSWER:
+OUTPUT:
 """
 
 PROMPT_CONTROL = """## role:system
-You are going to follow the instructions EXACTLY. Your task is simply to say a
-random word. No commentary, no tags. Shown below are examples.
+You predict what a target LLM will write next.
+Return only the predicted text — no commentary, no tags.
 
 ## role:example
-ANSWER:
-Alice
+OUTPUT:
+where two or more particles share a linked quantum state such that measuring one instantly sets the state of the other, no matter how far apart they are in space.
 
 ## role:example
-ANSWER:
-nucleus
+OUTPUT:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
 
 ## role:example
-ANSWER:
-the
+OUTPUT:
+AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
 
 ## role:test
-ANSWER:
+OUTPUT:
 """
 
 
