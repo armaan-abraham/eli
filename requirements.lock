@@ -267,6 +267,7 @@ regex==2024.11.6
     # via transformers
 requests==2.32.3
     # via datasets
+    # via eli
     # via huggingface-hub
     # via transformers
     # via wandb

@@ -152,6 +152,9 @@ def worker_process(
             if task is None:  # Sentinel value to stop
                 break
 
+            if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats()
+
             chunk_start, chunk_end = task
             batch_size = ds_cfg.target_model_batch_size_samples
 
@@ -178,6 +181,11 @@ def worker_process(
 
             # Notify completion of the chunk
             result_queue.put(("success", chunk_start, chunk_end))
+
+            if device.type == "cuda":
+                logging.info(
+                    f"Worker {proc_idx} finished with peak memory {torch.cuda.max_memory_allocated()}, peak memory reserved {torch.cuda.max_memory_reserved()}"
+                )
 
         logging.info(f"Worker {proc_idx} finished")
 

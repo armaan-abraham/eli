@@ -22,6 +22,7 @@ dependencies = [
     "awscli>=1",
     "datasets>=3.6.0",
     "dacite>=1.9.2",
+    "requests>=2.32.3",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"

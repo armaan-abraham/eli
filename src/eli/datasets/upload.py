@@ -41,7 +41,6 @@ def create_and_upload_shards(
 
         first_tensor = tensor_dict[table_names[0]]
         batch_size = first_tensor.shape[0]
-        print(f"Batch size: {batch_size}")
 
         for table_name, tensor in tensor_dict.items():
             assert (
