@@ -16,13 +16,13 @@ Return only the predicted text — no commentary, no tags.
 
 ## role:example
 THOUGHT:
-End sentence quantum entanglement definition needed finish now
+Ending sentence quantum entanglement definition needed finish now
 OUTPUT:
 where two or more particles share a linked quantum state such that measuring one instantly sets the state of the other, no matter how far apart they are in space.
 
 ## role:example
 THOUGHT:
-Write body fib function recursive return logic included
+Writing body fib function recursive return logic included
 OUTPUT:
     if n < 2:
         return n
@@ -30,7 +30,7 @@ OUTPUT:
 
 ## role:example
 THOUGHT:
-Craft headline AMD RDNA4 GPU launch coverage today
+Crafting headline AMD RDNA4 GPU launch coverage today
 OUTPUT:
 AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
 
@@ -606,6 +606,24 @@ def get_loss_control(
                     )
                 except Exception as e:
                     print(f"Failed to log decoded tokens: {e}")
+            
+            # Attention mask provided does not include prefix, so need to concatenate
+            attention_mask = torch.cat(
+                (
+                    torch.ones(
+                        input_tokens.shape[0],
+                        (
+                            prefix_tokens.shape[1]
+                        ),
+                        device=input_tokens.device,
+                    ),
+                    attention_mask,
+                ),
+                dim=1,
+            )
+
+            # Assert attention mask and input token shapes match
+            assert attention_mask.shape == input_tokens.shape, f"Attention mask shape: {attention_mask.shape}, input tokens shape: {input_tokens.shape}"
 
             # Get decoder logits and compute loss
             decoder_logits = encoder_decoder.module.decoder(

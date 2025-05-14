@@ -244,9 +244,6 @@ def train():
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
 
-            print(f"Target acts shape: {target_acts.shape}")
-            print(f"Target generated tokens shape: {target_generated_tokens.shape}")
-
             target_acts = target_acts.to(
                 torch.float32
             )  # Activations may have been stored as smaller dtype
@@ -320,7 +317,7 @@ def train():
 
     finally:
         if rank == 0:
-            save_encoder(encoder_decoder.module, train_cfg)
+            save_encoder(encoder_decoder_ddp.module, train_cfg)
 
         dist.destroy_process_group()
 

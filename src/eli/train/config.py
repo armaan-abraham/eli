@@ -14,7 +14,7 @@ class TrainConfig:
     s3_bucket: str = "eli-datasets"
     dataset_name: str = "EleutherAI-pythia-70m-resid_post-4"
 
-    num_samples: int = int(1e6)
+    num_samples: int = int(2e7)
 
     seed: int = 42
 
