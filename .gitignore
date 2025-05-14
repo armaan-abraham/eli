@@ -19,3 +19,5 @@ wandb/
 .DS_Store
 
 decoded_tokens*
+
+saved_models*

@@ -58,6 +58,9 @@ def save_encoder(encoder_decoder: EncoderDecoder, train_cfg: TrainConfig):
 
     # Save the model locally if path is provided
     if train_cfg.save_encoder_path:
+        # Ensure the save directory exists
+        save_dir = train_cfg.save_encoder_path.parent
+        save_dir.mkdir(parents=True, exist_ok=True)
         try:
             torch.save(encoder.state_dict(), train_cfg.save_encoder_path)
             print(f"Encoder saved to {train_cfg.save_encoder_path}")
@@ -292,7 +295,7 @@ def train():
                 log_dict.update(get_gradient_stats(encoder_decoder.parameters()))
 
                 # Log control loss if needed
-                if (train_iter + 1) % train_cfg.log_loss_control_every_n_iter == 0:
+                if train_iter % train_cfg.log_loss_control_every_n_iter == 0:
                     loss_control = get_loss_control(
                         train_cfg,
                         device,

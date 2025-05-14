@@ -4,8 +4,6 @@ from typing import Optional
 
 import torch
 
-from eli.datasets.config import DatasetConfig
-
 SAVE_DIR = Path(__file__).parent / "saved_models"
 
 
@@ -49,10 +47,10 @@ class EncoderConfig:
     encoding_len_toks: int = 8
 
     n_layers: int = 6
-    n_heads: int = 8
-    d_model: int = 768
-    d_head: int = 64
-    d_mlp: int = 3072
+    n_heads: int = 16
+    d_model: int = 1536
+    d_head: int = 128
+    d_mlp: int = 6144
 
     lr: float = 5e-4
     weight_decay: float = 1e-2
