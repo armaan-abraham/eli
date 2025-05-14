@@ -192,7 +192,7 @@ def worker_process(
 
             if device.type == "cuda":
                 logging.info(
-                    f"Worker {proc_idx} finished with peak memory {torch.cuda.max_memory_allocated()}, peak memory reserved {torch.cuda.max_memory_reserved()}"
+                    f"Worker {proc_idx} finished with peak memory {torch.cuda.max_memory_allocated() / 1024**3} GB, peak memory reserved {torch.cuda.max_memory_reserved() / 1024**3} GB"
                 )
 
         logging.info(f"Worker {proc_idx} finished")
