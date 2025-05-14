@@ -29,7 +29,7 @@ class DatasetConfig:
     target_ctx_len_toks: int = 64
     target_generation_len_toks: int = 32
 
-    target_model_batch_size_samples: int = 512  # Per device
+    target_model_batch_size_samples: int = 2048  # Per device
 
     max_shard_size_bytes: int = 1024**3
 
