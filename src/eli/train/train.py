@@ -1,24 +1,24 @@
+import dataclasses
 import datetime
 import gc
+import io
 import json
 import os
 from typing import Tuple
-import dataclasses
-import io
 
 import boto3
 import einops
 import torch
 import torch.distributed as dist
-import wandb
 from dacite import from_dict
-from jaxtyping import Int
+from jaxtyping import Float, Int
 from torch import Tensor
 from torch.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
+import wandb
 from eli.datasets.config import DatasetConfig
 from eli.train.config import TrainConfig, encoder_cfg, train_cfg
 from eli.train.download import download_dataset
@@ -26,16 +26,22 @@ from eli.train.encoder import EncoderDecoder, get_loss, get_loss_control
 
 
 def preprocess_target_generated_tokens(
-    target_generated_tokens: Int[Tensor, "batch tok"], tokenizer: AutoTokenizer
+    target_generated_tokens: Int[Tensor, "batch tok"],
+    target_tokenizer: AutoTokenizer,
+    decoder_tokenizer: AutoTokenizer,
+    train_iter: int = -1,
 ) -> Tuple[Int[Tensor, "batch tok"], Int[Tensor, "batch tok"]]:
     device = target_generated_tokens.device
-    decoded = tokenizer.batch_decode(
+    decoded = target_tokenizer.batch_decode(
         sequences=target_generated_tokens,
         skip_special_tokens=True,
         clean_up_tokenization_spaces=True,
     )
     decoded = [r.strip() for r in decoded]
-    encoded = tokenizer(
+    if train_iter == 0:
+        with open("decoded_tokens_preprocess.txt", "w") as f:
+            f.write("\n".join(decoded))
+    encoded = decoder_tokenizer(
         decoded, add_special_tokens=False, return_tensors="pt", padding=True
     )
     target_generated_tokens = encoded.input_ids.to(device)
@@ -74,14 +80,14 @@ def save_encoder(encoder_decoder: EncoderDecoder, train_cfg: TrainConfig):
             buffer = io.BytesIO()
             torch.save(encoder.state_dict(), buffer)
             buffer.seek(0)
-            
+
             # Create S3 client
             s3_client = boto3.client("s3")
-            
+
             # Create S3 key from decoder model name and dataset name
-            decoder_name = train_cfg.decoder_model_name.split('/')[-1]
+            decoder_name = train_cfg.decoder_model_name.split("/")[-1]
             s3_key = f"models/{train_cfg.dataset_name}-{decoder_name}-encoder.pt"
-            
+
             # Upload to S3
             s3_client.upload_fileobj(buffer, train_cfg.s3_bucket, s3_key)
             print(f"Encoder saved to S3: s3://{train_cfg.s3_bucket}/{s3_key}")
@@ -176,6 +182,16 @@ def pull_dataset_config(train_cfg: TrainConfig) -> DatasetConfig:
     return dataset_config
 
 
+@torch.no_grad()
+def preprocess_acts(
+    acts: Float[Tensor, "batch tok d_model"],
+) -> Float[Tensor, "batch tok d_model"]:
+    acts = acts.to(torch.float32)
+    acts -= acts.mean(dim=(-2, -1), keepdim=True)
+    acts /= acts.norm(dim=(-2, -1), keepdim=True)
+    return acts
+
+
 def train():
     # ----- Setup -----
     world_size, rank, local_rank, device = init_distributed()
@@ -186,14 +202,20 @@ def train():
         dataset_cfg.num_samples >= train_cfg.num_samples
     ), "Must have at least as many samples as requested"
 
-    # Initialize tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(train_cfg.decoder_model_name)
-    tokenizer.pad_token = tokenizer.eos_token
+    encoder_cfg.d_model = dataset_cfg.target_model_act_dim
+
+    # Initialize decoder tokenizer
+    decoder_tokenizer = AutoTokenizer.from_pretrained(train_cfg.decoder_model_name)
+    decoder_tokenizer.pad_token = decoder_tokenizer.eos_token
+
+    # Initialize target tokenizer
+    target_tokenizer = AutoTokenizer.from_pretrained(dataset_cfg.target_model_name)
+    target_tokenizer.pad_token = target_tokenizer.eos_token
 
     # Initialize model
-    encoder_decoder = EncoderDecoder(tokenizer, dataset_cfg, encoder_cfg, train_cfg).to(
-        device
-    )
+    encoder_decoder = EncoderDecoder(
+        decoder_tokenizer, dataset_cfg, encoder_cfg, train_cfg
+    ).to(device)
     assert encoder_decoder.encoder.get_device() == device
     assert encoder_decoder.decoder.device == device
 
@@ -225,11 +247,13 @@ def train():
     if train_cfg.wandb_enabled and rank == 0:
         run_name = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{train_cfg.decoder_model_name.split('/')[-1]}"
         wandb.init(project="eli", name=run_name)
-        wandb.config.update({
-            "train": dataclasses.asdict(train_cfg),
-            "encoder": dataclasses.asdict(encoder_cfg),
-            "dataset": dataclasses.asdict(dataset_cfg)
-        })
+        wandb.config.update(
+            {
+                "train": dataclasses.asdict(train_cfg),
+                "encoder": dataclasses.asdict(encoder_cfg),
+                "dataset": dataclasses.asdict(dataset_cfg),
+            }
+        )
 
     # ----- Training loop -----
     try:
@@ -246,10 +270,8 @@ def train():
 
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
+            target_acts = preprocess_acts(target_acts)
 
-            target_acts = target_acts.to(
-                torch.float32
-            )  # Activations may have been stored as smaller dtype
             assert (
                 target_acts.shape[0]
                 == target_generated_tokens.shape[0]
@@ -262,7 +284,12 @@ def train():
 
             # Preprocess data
             target_generated_tokens, attention_mask = (
-                preprocess_target_generated_tokens(target_generated_tokens, tokenizer)
+                preprocess_target_generated_tokens(
+                    target_generated_tokens,
+                    target_tokenizer,
+                    decoder_tokenizer,
+                    train_iter,
+                )
             )
 
             # Update model
@@ -275,7 +302,7 @@ def train():
                 target_generated_tokens,
                 attention_mask,
                 target_acts,
-                tokenizer,
+                decoder_tokenizer,
                 train_iter,
             )
 
@@ -296,24 +323,31 @@ def train():
 
                 # Log control loss if needed
                 if train_iter % train_cfg.log_loss_control_every_n_iter == 0:
+                    loss_control_batch_size = int(
+                        train_cfg.loss_control_batch_size_dataset_loader_batch_size_frac
+                        * train_cfg.dataset_loader_batch_size_samples
+                    )
                     loss_control = get_loss_control(
                         train_cfg,
                         device,
                         encoder_decoder_ddp,
-                        target_generated_tokens,
-                        attention_mask,
-                        tokenizer,
+                        target_generated_tokens[:loss_control_batch_size],
+                        attention_mask[:loss_control_batch_size],
+                        decoder_tokenizer,
                         train_iter,
                     )
                     log_dict["loss_control"] = loss_control.item()
+                    del loss_control
 
                 wandb.log(log_dict)
-            
+
             if device.type == "cuda":
-                print(f"Rank {rank} peak memory: {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB, peak memory allocated: {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB")
+                print(
+                    f"Rank {rank} peak memory: {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB, peak memory allocated: {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB"
+                )
 
             del target_acts, target_generated_tokens, attention_mask, loss
-             
+
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

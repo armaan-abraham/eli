@@ -236,78 +236,58 @@ class Encoder(torch.nn.Module):
         self.encoder_cfg = encoder_cfg
         self.dataset_cfg = dataset_cfg
 
-        # Multiplexing heads convert input activations to separate token embeddings
-        self.multiplex_heads = torch.nn.ModuleList(
-            [
-                torch.nn.Linear(
-                    dataset_cfg.target_model_act_dim
-                    * dataset_cfg.target_acts_collect_len_toks,
-                    encoder_cfg.d_model,
-                )
-                for _ in range(encoder_cfg.encoding_len_toks)
-            ]
+        self.pos_emb = torch.nn.Parameter(
+            torch.zeros(encoder_cfg.encoding_len_toks, dataset_cfg.target_model_act_dim)
         )
+        init.kaiming_normal_(self.pos_emb)
 
-        # Transformer blocks for processing the token sequence
         self.transformer_blocks = torch.nn.ModuleList(
             [TransformerBlock(encoder_cfg) for _ in range(encoder_cfg.n_layers)]
         )
 
-        # Output heads convert transformer outputs to decoder embeddings
-        self.output_heads = torch.nn.ModuleList(
-            [
-                torch.nn.Linear(encoder_cfg.d_model, train_cfg.decoder_model_embed_dim)
-                for _ in range(encoder_cfg.encoding_len_toks)
-            ]
+        self.pre_unembed_layernorm = torch.nn.LayerNorm(
+            dataset_cfg.target_model_act_dim
         )
 
-        # Initialize weights
-        for head in self.multiplex_heads:
-            init.kaiming_normal_(head.weight)
-            init.zeros_(head.bias)
-
-        for head in self.output_heads:
-            init.kaiming_normal_(head.weight)
-            init.zeros_(head.bias)
+        # Output heads convert transformer outputs to decoder embeddings
+        self.unembed = torch.nn.Linear(
+            in_features=dataset_cfg.target_model_act_dim,
+            out_features=train_cfg.decoder_model_embed_dim,
+        )
+        init.kaiming_normal_(self.unembed.weight)
 
     def forward(
         self, x: Float[Tensor, "batch tok d_target_model"]
     ) -> Float[Tensor, "batch tok d_decoder_model"]:
-        x = einops.rearrange(x, "batch tok d_model -> batch (tok d_model)")
-
-        # Apply multiplex heads to create a sequence of tokens
-        x_toks = torch.stack(
-            [head(x) for head in self.multiplex_heads], dim=1
-        )  # [batch tok d_model]
-
-        assert (
-            x_toks.shape
-            == (
-                x.shape[0],
-                self.encoder_cfg.encoding_len_toks,
-                self.encoder_cfg.d_model,
-            )
-        ), f"Expected shape {(x.shape[0], self.encoder_cfg.encoding_len_toks, self.encoder_cfg.d_model)}, got {x_toks.shape}"
-
-        # Apply transformer blocks
-        for block in self.transformer_blocks:
-            x_toks = block(x_toks)
-
-        # Apply output heads to each token
-        x_out = torch.stack(
-            [head(x_toks[:, i, :]) for i, head in enumerate(self.output_heads)], dim=1
+        pos_emb = einops.repeat(
+            self.pos_emb, "tok d_model -> batch tok d_model", batch=x.shape[0]
+        )
+        seq = torch.cat([x, pos_emb], dim=1)  # [batch tok+pos_emb d_target_model]
+        assert seq.shape == (
+            x.shape[0],
+            self.encoder_cfg.encoding_len_toks + self.encoder_cfg.encoding_len_toks,
+            self.dataset_cfg.target_model_act_dim,
         )
 
+        for block in self.transformer_blocks:
+            seq = block(seq)
+
+        encodings = seq[:, -self.encoder_cfg.encoding_len_toks :]
+
+        encodings = self.pre_unembed_layernorm(encodings)
+
+        out = self.unembed(encodings)
+
         assert (
-            x_out.shape
+            out.shape
             == (
                 x.shape[0],
                 self.encoder_cfg.encoding_len_toks,
                 self.train_cfg.decoder_model_embed_dim,
             )
-        ), f"Expected shape {(x.shape[0], self.encoder_cfg.encoding_len_toks, self.train_cfg.decoder_model_embed_dim)}, got {x_out.shape}"
+        ), f"Expected shape {(x.shape[0], self.encoder_cfg.encoding_len_toks, self.train_cfg.decoder_model_embed_dim)}, got {out.shape}"
 
-        return x_out
+        return out
 
     def get_device(self) -> torch.device:
         return next(self.parameters()).device
@@ -606,15 +586,13 @@ def get_loss_control(
                     )
                 except Exception as e:
                     print(f"Failed to log decoded tokens: {e}")
-            
+
             # Attention mask provided does not include prefix, so need to concatenate
             attention_mask = torch.cat(
                 (
                     torch.ones(
                         input_tokens.shape[0],
-                        (
-                            prefix_tokens.shape[1]
-                        ),
+                        (prefix_tokens.shape[1]),
                         device=input_tokens.device,
                     ),
                     attention_mask,
@@ -623,7 +601,9 @@ def get_loss_control(
             )
 
             # Assert attention mask and input token shapes match
-            assert attention_mask.shape == input_tokens.shape, f"Attention mask shape: {attention_mask.shape}, input tokens shape: {input_tokens.shape}"
+            assert (
+                attention_mask.shape == input_tokens.shape
+            ), f"Attention mask shape: {attention_mask.shape}, input tokens shape: {input_tokens.shape}"
 
             # Get decoder logits and compute loss
             decoder_logits = encoder_decoder.module.decoder(

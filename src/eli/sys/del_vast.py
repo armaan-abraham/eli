@@ -1,6 +1,7 @@
-import os
-import requests
 import argparse
+import os
+
+import requests
 
 """
 Call this script after long running job to delete the vast instance and save money :D
@@ -12,10 +13,9 @@ bearer_token = os.environ["VAST_BEARER_TOKEN"]
 payload = {}
 url = f"https://console.vast.ai/api/v0/instances/{vast_instance_id}/"
 headers = {
-   'Accept': 'application/json',
-   'Content-Type': 'application/json',
-   'Authorization': f'Bearer {bearer_token}'
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {bearer_token}",
 }
 
 response = requests.request("DELETE", url, headers=headers, data=payload)
-
