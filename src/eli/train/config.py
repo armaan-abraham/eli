@@ -49,6 +49,7 @@ class EncoderConfig:
 
     n_layers: int = 6
     n_heads: int = 16
+    d_model: int = 1024
     d_mlp_factor: int = 4
 
     lr: float = 5e-4

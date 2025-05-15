@@ -250,6 +250,13 @@ class Encoder(torch.nn.Module):
         self.encoder_cfg = encoder_cfg
         self.dataset_cfg = dataset_cfg
 
+        self.embed = torch.nn.Linear(
+            dataset_cfg.target_model_act_dim,
+            encoder_cfg.d_model,
+        )
+        init.kaiming_normal_(self.embed.weight)
+        init.zeros_(self.embed.bias)
+
         # Length of sequence which includes encoding tokens that are used for
         # prediction and target embeddings
         self.seq_len_target = dataset_cfg.num_act_layers * dataset_cfg.target_acts_collect_len_toks
@@ -259,7 +266,7 @@ class Encoder(torch.nn.Module):
         )
 
         self.pos_emb = torch.nn.Parameter(
-            torch.zeros(self.tot_seq_len, dataset_cfg.target_model_act_dim)
+            torch.zeros(self.tot_seq_len, encoder_cfg.d_model)
         )
         init.kaiming_normal_(self.pos_emb)
 
@@ -268,20 +275,29 @@ class Encoder(torch.nn.Module):
         )
 
         self.pre_unembed_layernorm = torch.nn.LayerNorm(
-            dataset_cfg.target_model_act_dim
+            encoder_cfg.d_model
         )
 
         # Output heads convert transformer outputs to decoder embeddings
         self.unembed = torch.nn.Linear(
-            in_features=dataset_cfg.target_model_act_dim,
+            in_features=encoder_cfg.d_model,
             out_features=train_cfg.decoder_model_embed_dim,
         )
         init.kaiming_normal_(self.unembed.weight)
+        init.zeros_(self.unembed.bias)
 
     def forward(
         self, x: Float[Tensor, "batch tok layer d_target_model"]
     ) -> Float[Tensor, "batch tok d_decoder_model"]:
-        x = einops.rearrange(x, "batch tok layer d_model -> batch (tok layer) d_model")
+        batch_size = x.shape[0]
+        x = einops.rearrange(x, "batch tok layer d_target_model -> batch (tok layer) d_target_model")
+
+        x = self.embed(x) # [batch tok d_model]
+        assert x.shape == (
+            batch_size,
+            self.seq_len_target,
+            self.encoder_cfg.d_model,
+        )
 
         pos_emb = einops.repeat(
             self.pos_emb, "tok d_model -> batch tok d_model", batch=x.shape[0]
@@ -292,19 +308,19 @@ class Encoder(torch.nn.Module):
         assert seq_target.shape == (
             x.shape[0],
             self.seq_len_target,
-            self.dataset_cfg.target_model_act_dim,
+            self.encoder_cfg.d_model,
         )
         assert seq_encodings.shape == (
             x.shape[0],
             self.encoder_cfg.encoding_len_toks,
-            self.dataset_cfg.target_model_act_dim,
+            self.encoder_cfg.d_model,
         )
 
         seq = torch.cat([seq_target, seq_encodings], dim=1)
         assert seq.shape == (
             x.shape[0],
             self.tot_seq_len,
-            self.dataset_cfg.target_model_act_dim,
+            self.encoder_cfg.d_model,
         )
 
         for block in self.transformer_blocks:
