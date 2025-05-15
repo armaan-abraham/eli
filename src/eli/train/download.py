@@ -67,7 +67,7 @@ def download_dataset(
         )
         .shuffle(train_cfg.dataset_loader_shuffle_buffer_size_wds_entries)
         .decode()
-        .to_tuple("target_acts.pth", "target_generated_tokens.pth")
+        .to_tuple("target_acts.npy", "target_generated_tokens.npy")
         .unbatched()  # Unbatch because entries contain multiple samples
         .batched(train_cfg.dataset_loader_batch_size_samples)
     )

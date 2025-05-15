@@ -8,7 +8,7 @@ from eli.datasets.logging_utils import configure_logging
 
 
 def main():
-    dataset_name = f"{ds_cfg.target_model_name.replace('/', '-')}-{ds_cfg.site}-{ds_cfg.target_acts_layer_range[0]}-{ds_cfg.target_acts_layer_range[1]}"
+    dataset_name = f"{ds_cfg.target_model_name.replace('/', '-')}-{ds_cfg.site}-{ds_cfg.target_acts_layer_range[0]}-{ds_cfg.target_acts_layer_range[1]}-{ds_cfg.num_samples}"
 
     # Configure logging to both console and S3
     s3_handler = configure_logging(ds_cfg.s3_bucket, f"datasets/{dataset_name}")

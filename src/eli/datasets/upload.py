@@ -50,7 +50,7 @@ def create_and_upload_shards(
         for table_name, tensor in tensor_dict.items():
             tensor_size_bytes = tensor.element_size() * tensor.numel()
             total_bytes += tensor_size_bytes
-            sample_dict[f"{table_name}.pth"] = tensor
+            sample_dict[f"{table_name}.npy"] = tensor.cpu().numpy()
 
         writer.write(sample_dict)
 
