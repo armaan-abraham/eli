@@ -250,8 +250,16 @@ class Encoder(torch.nn.Module):
         self.encoder_cfg = encoder_cfg
         self.dataset_cfg = dataset_cfg
 
+        # Length of sequence which includes encoding tokens that are used for
+        # prediction and target embeddings
+        self.seq_len_target = dataset_cfg.num_act_layers * dataset_cfg.target_acts_collect_len_toks
+        self.tot_seq_len = (
+            encoder_cfg.encoding_len_toks
+            + self.seq_len_target
+        )
+
         self.pos_emb = torch.nn.Parameter(
-            torch.zeros(encoder_cfg.encoding_len_toks, dataset_cfg.target_model_act_dim)
+            torch.zeros(self.tot_seq_len, dataset_cfg.target_model_act_dim)
         )
         init.kaiming_normal_(self.pos_emb)
 
@@ -271,15 +279,31 @@ class Encoder(torch.nn.Module):
         init.kaiming_normal_(self.unembed.weight)
 
     def forward(
-        self, x: Float[Tensor, "batch tok d_target_model"]
+        self, x: Float[Tensor, "batch tok layer d_target_model"]
     ) -> Float[Tensor, "batch tok d_decoder_model"]:
+        x = einops.rearrange(x, "batch tok layer d_model -> batch (tok layer) d_model")
+
         pos_emb = einops.repeat(
             self.pos_emb, "tok d_model -> batch tok d_model", batch=x.shape[0]
         )
-        seq = torch.cat([x, pos_emb], dim=1)  # [batch tok+pos_emb d_target_model]
+
+        seq_target = pos_emb[:, : self.seq_len_target] + x
+        seq_encodings = pos_emb[:, self.seq_len_target :]
+        assert seq_target.shape == (
+            x.shape[0],
+            self.seq_len_target,
+            self.dataset_cfg.target_model_act_dim,
+        )
+        assert seq_encodings.shape == (
+            x.shape[0],
+            self.encoder_cfg.encoding_len_toks,
+            self.dataset_cfg.target_model_act_dim,
+        )
+
+        seq = torch.cat([seq_target, seq_encodings], dim=1)
         assert seq.shape == (
             x.shape[0],
-            self.encoder_cfg.encoding_len_toks + self.encoder_cfg.encoding_len_toks,
+            self.tot_seq_len,
             self.dataset_cfg.target_model_act_dim,
         )
 
@@ -356,10 +380,11 @@ class EncoderDecoder(torch.nn.Module):
             == target_generated_tokens.shape[0]
             == attention_mask.shape[0]
         )
-        assert target_acts.ndim == 3
+        assert target_acts.ndim == 4
         assert target_generated_tokens.ndim == 2
         assert target_acts.shape[1] == self.dataset_cfg.target_acts_collect_len_toks
-        assert target_acts.shape[2] == self.dataset_cfg.target_model_act_dim
+        assert target_acts.shape[2] == self.dataset_cfg.num_act_layers
+        assert target_acts.shape[3] == self.dataset_cfg.target_model_act_dim
 
         # Generate virtual embeddings with the encoder
         virtual_embeddings = self.encoder(target_acts)  # [batch tok d_embed]

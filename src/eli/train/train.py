@@ -184,11 +184,11 @@ def pull_dataset_config(train_cfg: TrainConfig) -> DatasetConfig:
 
 @torch.no_grad()
 def preprocess_acts(
-    acts: Float[Tensor, "batch tok d_model"],
-) -> Float[Tensor, "batch tok d_model"]:
+    acts: Float[Tensor, "batch tok layer d_model"],
+) -> Float[Tensor, "batch tok layer d_model"]:
     acts = acts.to(torch.float32)
-    acts -= acts.mean(dim=(-2, -1), keepdim=True)
-    acts /= acts.norm(dim=(-2, -1), keepdim=True)
+    acts -= acts.mean(dim=(-1), keepdim=True)
+    acts /= acts.norm(dim=(-1), keepdim=True)
     return acts
 
 
@@ -270,6 +270,7 @@ def train():
 
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
+            print("Target acts shape:", target_acts.shape)
             target_acts = preprocess_acts(target_acts)
 
             assert (

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from dataclasses import field
 
 import torch
 import transformer_lens
@@ -44,7 +45,7 @@ class DatasetConfig:
 
     target_acts_collect_len_toks: int = 16
     site: str = "resid_post"
-    target_acts_layer_range: tuple[int, int] = (3, 5)  # [start, end] inclusive
+    target_acts_layer_range: list[int, int] = field(default_factory=lambda: [3, 5])  # [start, end] inclusive
 
     @property
     def device(self) -> torch.device:
@@ -58,9 +59,9 @@ class DatasetConfig:
     def act_storage_dtype(self) -> torch.dtype:
         return dtypes[self._act_storage_dtype_str]
 
-    # @property
-    # def act_name(self) -> str:
-    #     return transformer_lens.utils.get_act_name(self.site, self.layer)
+    @property
+    def num_act_layers(self) -> int:
+        return self.target_acts_layer_range[1] - self.target_acts_layer_range[0] + 1
 
 
 ds_cfg = DatasetConfig()

@@ -10,9 +10,9 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 @dataclass
 class TrainConfig:
     s3_bucket: str = "eli-datasets"
-    dataset_name: str = "EleutherAI-pythia-70m-resid_post-4"
+    dataset_name: str = "EleutherAI-pythia-70m-resid_post-3-5"
 
-    num_samples: int = int(2e7)
+    num_samples: int = int(4e7)
 
     seed: int = 42
 
@@ -20,7 +20,7 @@ class TrainConfig:
 
     dataset_loader_batch_size_samples: int = 128
     loss_control_batch_size_dataset_loader_batch_size_frac: float = 1.0
-    dataset_loader_shuffle_buffer_size_wds_entries: int = 10
+    dataset_loader_shuffle_buffer_size_wds_entries: int = 2
 
     decoder_model_name: str = "gpt2"
     decoder_model_embed_dim: int = 768
