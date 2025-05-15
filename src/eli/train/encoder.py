@@ -189,16 +189,30 @@ class MLP(torch.nn.Module):
             einsum(x, self.W_in, "batch tok d_model, d_mlp d_model -> batch tok d_mlp")
             + self.b_in
         )
+        
         # Apply GELU activation
         acts = torch.nn.functional.gelu(acts)
+        
         # Project back to model dimension
-        acts = (
-            einsum(
-                acts, self.W_out, "batch tok d_mlp, d_model d_mlp -> batch tok d_model"
-            )
-            + self.b_out
+        out_proj = einsum(
+            acts, self.W_out, "batch tok d_mlp, d_model d_mlp -> batch tok d_model"
         )
-        return acts
+        
+        # Debug check before adding b_out (line 199)
+        if torch.isnan(out_proj).any() or torch.isinf(out_proj).any():
+            print(f"Warning: NaN/Inf detected before b_out addition")
+            print(f"out_proj shape: {out_proj.shape}, b_out shape: {self.b_out.shape}")
+            torch.save(out_proj, "debug_nan_before_bout.pt")
+        
+        # This is line 199 where the error occurs
+        try:
+            final_output = out_proj + self.b_out
+        except Exception as e:
+            print(f"Error at b_out addition: {e}")
+            print(f"out_proj shape: {out_proj.shape}, b_out shape: {self.b_out.shape}")
+            raise
+        
+        return final_output
 
 
 class TransformerBlock(torch.nn.Module):
