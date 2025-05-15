@@ -1,11 +1,7 @@
-import io
-import os
-from typing import Any, Dict, Iterator
+from typing import Dict, Iterator
 
-import numpy as np
 import torch
 import webdataset as wds
-from torch.utils.data import DataLoader
 
 from eli.datasets.config import DatasetConfig
 from eli.train.config import TrainConfig, train_cfg
@@ -63,7 +59,7 @@ def download_dataset(
     dataset = (
         # Shard shuffle false because of multi node
         wds.WebDataset(
-            url, resampled=True, nodesplitter=wds.split_by_node, shardshuffle=False
+            url, resampled=True, nodesplitter=wds.split_by_node, shardshuffle=False, handler=wds.warn_and_continue
         )
         .shuffle(train_cfg.dataset_loader_shuffle_buffer_size_wds_entries)
         .decode()
@@ -76,7 +72,7 @@ def download_dataset(
         wds.WebLoader(
             dataset,
             batch_size=None,
-            num_workers=min(shard_count, 4),
+            num_workers=min(shard_count, 2),
         )
         # Unbatch, shuffle, batch again to mix samples from different workers
         .unbatched()
