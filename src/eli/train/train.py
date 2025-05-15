@@ -4,6 +4,8 @@ import gc
 import io
 import json
 import os
+import signal
+import sys
 from typing import Tuple
 
 import boto3
@@ -93,6 +95,7 @@ def save_encoder(encoder_decoder: EncoderDecoder, train_cfg: TrainConfig):
             print(f"Encoder saved to S3: s3://{train_cfg.s3_bucket}/{s3_key}")
         except Exception as e:
             print(f"Failed to save encoder to S3: {e}")
+            raise e # We want program to fail if S3 saving failed
 
 
 def get_gradient_stats(parameters):
@@ -192,6 +195,8 @@ def preprocess_acts(
     return acts
 
 
+
+
 def train():
     # ----- Setup -----
     world_size, rank, local_rank, device = init_distributed()
@@ -254,6 +259,23 @@ def train():
                 "dataset": dataclasses.asdict(dataset_cfg),
             }
         )
+
+    # Define cleanup functions and add them as SIG handlers because another
+    # worker may error and cause this process to terminate
+    def cleanup():
+        if rank == 0:
+            print("Saving model before shutdown...")
+            save_encoder(encoder_decoder_ddp.module, train_cfg)
+        dist.destroy_process_group()
+        if train_cfg.wandb_enabled:
+            wandb.finish()
+
+    def cleanup_handler(signum, frame):
+        cleanup()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, cleanup_handler)
+    signal.signal(signal.SIGINT, cleanup_handler)
 
     # ----- Training loop -----
     try:

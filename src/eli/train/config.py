@@ -28,7 +28,7 @@ class TrainConfig:
     _dtype: torch.dtype = torch.float16  # For autocast
 
     save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
-    save_encoder_to_s3: bool = False
+    save_encoder_to_s3: bool = True
 
     log_loss_control_every_n_iter: int = 20
 
@@ -52,7 +52,7 @@ class EncoderConfig:
     d_model: int = 1024
     d_mlp_factor: int = 4
 
-    lr: float = 5e-4
+    lr: float = 4e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.99)
 
