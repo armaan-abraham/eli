@@ -1,20 +1,13 @@
-import io
 import json
-import os
-import shutil
-import subprocess
-import tempfile
-import time
+import logging
 from dataclasses import asdict
 
 import boto3
-import numpy as np
-import psutil
-import torch
 from tqdm import tqdm
 from webdataset import ShardWriter
 
 from eli.datasets.config import ds_cfg
+from eli.datasets.logging_utils import log_progress
 
 
 def create_and_upload_shards(
@@ -33,6 +26,7 @@ def create_and_upload_shards(
     batch_idx = 0
 
     total_bytes = 0
+    logging.info(f"Starting to create and upload shards for {dataset_name}")
 
     for tensor_dict in tensor_batch_iterator:
         # Get batch size from the first tensor
@@ -67,6 +61,10 @@ def create_and_upload_shards(
         # Update progress bar with bytes information
         progress_bar.set_postfix(processed_bytes=f"{total_bytes/1024**2:.2f} MB")
         progress_bar.update(batch_size)
+        
+        # Log progress to file (tqdm updates console)
+        log_progress(total_samples, ds_cfg.num_samples)
+        logging.info(f"Total data size: {total_bytes/1024**2:.2f} MB")
 
         # Check if we've reached the desired number of samples
         if total_samples >= ds_cfg.num_samples:
@@ -105,7 +103,5 @@ def upload_dataset_config(dataset_name):
         Body=config_json,
         ContentType="application/json",
     )
-
-    print(f"Uploaded dataset configuration to s3://{ds_cfg.s3_bucket}/{s3_key}")
 
     return {"config_size_bytes": len(config_json), "config_s3_key": s3_key}
