@@ -10,9 +10,9 @@ SAVE_DIR = Path(__file__).parent / "saved_models"
 @dataclass
 class TrainConfig:
     s3_bucket: str = "eli-datasets"
-    dataset_name: str = "EleutherAI-pythia-70m-resid_post-3-5"
+    dataset_name: str = "EleutherAI-pythia-70m-resid_post-4-5-100000000"
 
-    num_samples: int = int(4e7)
+    num_samples: int = int(5e7)
 
     seed: int = 42
 
@@ -52,7 +52,7 @@ class EncoderConfig:
     d_model: int = 1024
     d_mlp_factor: int = 4
 
-    lr: float = 4e-4
+    lr: float = 2.5e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.99)
 
