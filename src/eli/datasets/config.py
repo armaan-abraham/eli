@@ -25,7 +25,6 @@ class DatasetConfig:
 
     target_model_name: str = "EleutherAI/pythia-70m"
     vocab_size_target: int = 50304
-    target_acts_collect_len_toks: int = 8
     target_ctx_len_toks: int = 64
     target_generation_len_toks: int = 32
 
@@ -43,8 +42,9 @@ class DatasetConfig:
 
     _act_storage_dtype_str: str = "float16"
 
+    target_acts_collect_len_toks: int = 16
     site: str = "resid_post"
-    layer: int = 4
+    target_acts_layer_range: tuple[int, int] = (3, 5)  # [start, end] inclusive
 
     @property
     def device(self) -> torch.device:
@@ -58,9 +58,9 @@ class DatasetConfig:
     def act_storage_dtype(self) -> torch.dtype:
         return dtypes[self._act_storage_dtype_str]
 
-    @property
-    def act_name(self) -> str:
-        return transformer_lens.utils.get_act_name(self.site, self.layer)
+    # @property
+    # def act_name(self) -> str:
+    #     return transformer_lens.utils.get_act_name(self.site, self.layer)
 
 
 ds_cfg = DatasetConfig()

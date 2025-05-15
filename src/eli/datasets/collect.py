@@ -5,9 +5,7 @@ from eli.datasets.upload import create_and_upload_shards, upload_dataset_config
 
 
 def main():
-    dataset_name = (
-        f"{ds_cfg.target_model_name.replace('/', '-')}-{ds_cfg.site}-{ds_cfg.layer}"
-    )
+    dataset_name = f"{ds_cfg.target_model_name.replace('/', '-')}-{ds_cfg.site}-{ds_cfg.target_acts_layer_range[0]}-{ds_cfg.target_acts_layer_range[1]}"
 
     # Collect tokens
     token_stream = stream_tokens()

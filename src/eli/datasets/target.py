@@ -78,21 +78,33 @@ def process_tokens_with_model(
     """
     # Use autocast for model operations
     with torch.autocast(device_type=device.type, dtype=ds_cfg.dtype):
-        # Collect activations
+        # Produce activations
         _, cache = target_model_act_collection.run_with_cache(
             batch_toks,
-            stop_at_layer=ds_cfg.layer + 1,
-            names_filter=ds_cfg.act_name,
+            stop_at_layer=ds_cfg.target_acts_layer_range[1] + 1,
             return_cache_object=True,
         )
 
-        # Get activations and move to shared memory
-        acts = cache.cache_dict[ds_cfg.act_name][
-            :, -ds_cfg.target_acts_collect_len_toks :, :
-        ]  # [batch tok d_model]
+        # Extract activations and move to shared memory
+        acts = torch.stack(
+            [
+                cache.cache_dict[
+                    transformer_lens.utils.get_act_name(ds_cfg.site, layer)
+                ][:, -ds_cfg.target_acts_collect_len_toks :, :]  # [batch tok d_model]
+                for layer in range(
+                    ds_cfg.target_acts_layer_range[0],
+                    ds_cfg.target_acts_layer_range[1] + 1,
+                )
+            ],
+            dim=2,
+        )  # [batch tok layer d_model]
+
+        del cache
+
         assert acts.shape == (
             ds_cfg.target_model_batch_size_samples,
             ds_cfg.target_acts_collect_len_toks,
+            ds_cfg.target_acts_layer_range[1] - ds_cfg.target_acts_layer_range[0] + 1,
             ds_cfg.target_model_act_dim,
         )
         target_acts[batch_start:batch_end] = acts.cpu()
@@ -287,6 +299,9 @@ class TargetDataStream:
             (
                 self.ds_cfg.dataset_entry_size_samples,
                 self.ds_cfg.target_acts_collect_len_toks,
+                self.ds_cfg.target_acts_layer_range[1]
+                - self.ds_cfg.target_acts_layer_range[0]
+                + 1,
                 self.ds_cfg.target_model_act_dim,
             ),
             dtype=self.ds_cfg.act_storage_dtype,
