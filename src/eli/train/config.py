@@ -18,7 +18,7 @@ class TrainConfig:
 
     wandb_enabled: bool = True
 
-    dataset_loader_batch_size_samples: int = 128
+    dataset_loader_batch_size_samples: int = 64
     loss_control_batch_size_dataset_loader_batch_size_frac: float = 1.0
     dataset_loader_shuffle_buffer_size_wds_entries: int = 2
 
