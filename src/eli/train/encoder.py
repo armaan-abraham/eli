@@ -412,6 +412,7 @@ class EncoderDecoder(torch.nn.Module):
             )
         )
 
+        # Use different autocast dtype for decoder to match its training dtype
         with torch.autocast(device_type=target_acts.device.type, dtype=self.train_cfg.dtype_decoder):
             # Run the decoder
             decoder_logits = self.decoder(
