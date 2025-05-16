@@ -12,7 +12,7 @@ class TrainConfig:
     s3_bucket: str = "eli-datasets"
     dataset_name: str = "EleutherAI-pythia-70m-resid_post-4-5-100000000"
 
-    num_samples: int = int(2e7)
+    num_samples: int = int(1e7)
 
     seed: int = 42
 
@@ -25,20 +25,30 @@ class TrainConfig:
     decoder_model_name: str = "gpt2"
     decoder_model_embed_dim: int = 768
 
-    _dtype: torch.dtype = torch.float16  # For autocast
+    # Autocast
+    _dtype_decoder: torch.dtype = torch.float16 
+    _dtype_encoder: torch.dtype = torch.bfloat16
 
-    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
-    save_encoder_to_s3: bool = True
+    save_encoder_path: Optional[Path] = None
+    save_encoder_to_s3: bool = False
 
     log_loss_control_every_n_iter: int = 20
 
+    grad_clip_norm: float = 0.5
+
     @property
-    def dtype(self) -> torch.dtype:
+    def dtype_decoder(self) -> torch.dtype:
         if torch.cuda.is_available():
-            return self._dtype
+            return self._dtype_decoder
         else:
             return torch.float32
 
+    @property
+    def dtype_encoder(self) -> torch.dtype:
+        if torch.cuda.is_available():
+            return self._dtype_encoder
+        else:
+            return torch.float32
 
 train_cfg = TrainConfig()
 

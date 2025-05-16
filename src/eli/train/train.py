@@ -331,7 +331,9 @@ def train():
             loss_scaler.scale(loss).backward()
             loss_scaler.unscale_(optimizer)
 
-            torch.nn.utils.clip_grad_norm_(encoder_decoder.parameters(), max_norm=5.0)
+            torch.nn.utils.clip_grad_norm_(
+                encoder_decoder.parameters(), max_norm=train_cfg.grad_clip_norm
+            )
 
             loss_scaler.step(optimizer)
             loss_scaler.update()

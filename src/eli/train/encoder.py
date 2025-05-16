@@ -412,10 +412,11 @@ class EncoderDecoder(torch.nn.Module):
             )
         )
 
-        # Run the decoder
-        decoder_logits = self.decoder(
-            inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask
-        ).logits
+        with torch.autocast(device_type=target_acts.device.type, dtype=self.train_cfg.dtype_decoder):
+            # Run the decoder
+            decoder_logits = self.decoder(
+                inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask
+            ).logits
 
         # Extract target logits (for prediction loss)
         decoder_logits_target_tokens = decoder_logits[
@@ -588,7 +589,7 @@ def get_loss(
             Tuple of (total loss, target prediction loss, dinalar loss)
     """
     # Use autocast for mixed precision
-    with torch.autocast(device_type=device.type, dtype=train_cfg.dtype):
+    with torch.autocast(device_type=device.type, dtype=train_cfg.dtype_encoder):
         # Forward pass
         (
             decoder_logits_target_tokens,
@@ -621,7 +622,7 @@ def get_loss_control(
     """Evaluate loss without using the encoder."""
 
     with torch.no_grad():
-        with torch.autocast(device_type=device.type, dtype=train_cfg.dtype):
+        with torch.autocast(device_type=device.type, dtype=train_cfg.dtype_decoder):
             # Create input tokens with control prompt
             prefix_tokens = tokenizer(
                 PROMPT_CONTROL, return_tensors="pt", add_special_tokens=False
