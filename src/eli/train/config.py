@@ -12,7 +12,7 @@ class TrainConfig:
     s3_bucket: str = "eli-datasets"
     dataset_name: str = "EleutherAI-pythia-70m-resid_post-4-5-100000000"
 
-    num_samples: int = int(5e7)
+    num_samples: int = int(2e7)
 
     seed: int = 42
 
@@ -47,12 +47,12 @@ train_cfg = TrainConfig()
 class EncoderConfig:
     encoding_len_toks: int = 8
 
-    n_layers: int = 6
+    n_layers: int = 12
     n_heads: int = 16
     d_model: int = 1024
     d_mlp_factor: int = 4
 
-    lr: float = 2.5e-4
+    lr: float = 2e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.99)
 
