@@ -207,8 +207,6 @@ def train():
         dataset_cfg.num_samples >= train_cfg.num_samples
     ), "Must have at least as many samples as requested"
 
-    encoder_cfg.d_model = dataset_cfg.target_model_act_dim
-
     # Initialize decoder tokenizer
     decoder_tokenizer = AutoTokenizer.from_pretrained(train_cfg.decoder_model_name)
     decoder_tokenizer.pad_token = decoder_tokenizer.eos_token
