@@ -290,7 +290,6 @@ def train():
 
             # Load data
             target_acts, target_generated_tokens = next(data_loader)
-            print("Target acts shape:", target_acts.shape)
             target_acts = preprocess_acts(target_acts)
 
             assert (
