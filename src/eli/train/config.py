@@ -60,9 +60,9 @@ train_cfg = TrainConfig()
 class EncoderConfig:
     encoding_len_toks: int = 4
 
-    n_layers: int = 12
-    n_heads: int = 16
-    d_model: int = 1024
+    n_layers: int = 6
+    n_heads: int = 8
+    d_model: int = 1536
     d_mlp_factor: int = 4
 
     lr: float = 3e-4
