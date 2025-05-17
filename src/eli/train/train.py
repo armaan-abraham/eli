@@ -64,11 +64,12 @@ def save_encoder(
         train_iter: Optional training iteration number for periodic saving.
                     If None, saves as the final model.
     """
-    # Get the encoder, accounting for DataParallel
     encoder = encoder_decoder.encoder
 
+    device = encoder.get_device()
+
     # Move to CPU before saving
-    encoder = encoder.cpu()
+    encoder.cpu()
 
     # Determine filename based on whether it's a periodic save or final save
     if train_iter is not None:
@@ -111,6 +112,9 @@ def save_encoder(
         except Exception as e:
             print(f"Failed to save encoder to S3: {e}")
             raise e  # We want program to fail if S3 saving failed
+
+    # Move back to original device
+    encoder.to(device)
 
 
 def get_gradient_stats(parameters):
@@ -444,7 +448,7 @@ def train():
                 and train_cfg.save_encoder_every_n_iter > 0
                 and (train_iter + 1) % train_cfg.save_encoder_every_n_iter == 0
             ):
-                print(f"Periodically saving encoder at iteration {train_iter + 1}")
+                print(f"Saving encoder at iteration {train_iter + 1}")
                 save_encoder(
                     encoder_decoder_ddp.module, train_cfg, train_iter=train_iter + 1
                 )
