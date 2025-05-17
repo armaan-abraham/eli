@@ -29,8 +29,8 @@ class TrainConfig:
     _dtype_decoder: torch.dtype = torch.float16
     _dtype_encoder: torch.dtype = torch.bfloat16
 
-    save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
-    save_encoder_s3_prefix: Optional[str] = "log"
+    save_encoder_path: Optional[Path] = None
+    save_encoder_s3_prefix: Optional[str] = None
     save_encoder_every_n_iter: int = 2000
 
     log_loss_control_every_n_iter: int = 20
