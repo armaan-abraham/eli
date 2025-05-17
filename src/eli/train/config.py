@@ -18,12 +18,12 @@ class TrainConfig:
 
     wandb_enabled: bool = True
 
-    dataset_loader_batch_size_samples: int = 256
+    dataset_loader_batch_size_samples: int = 64
     loss_control_batch_size_dataset_loader_batch_size_frac: float = 1.0
     dataset_loader_shuffle_buffer_size_wds_entries: int = 2
 
-    decoder_model_name: str = "EleutherAI/pythia-70m"
-    decoder_model_embed_dim: int = 512
+    decoder_model_name: str = "gpt2"
+    decoder_model_embed_dim: int = 768
 
     # Autocast
     _dtype_decoder: torch.dtype = torch.float16
@@ -58,14 +58,14 @@ train_cfg = TrainConfig()
 
 @dataclass
 class EncoderConfig:
-    encoding_len_toks: int = 8
+    encoding_len_toks: int = 4
 
     n_layers: int = 6
     n_heads: int = 8
     d_model: int = 768
     d_mlp_factor: int = 4
 
-    lr: float = 2e-4
+    lr: float = 3e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.99)
 
