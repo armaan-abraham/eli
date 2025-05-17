@@ -1,10 +1,10 @@
 import logging
 
 from eli.datasets.config import ds_cfg
+from eli.datasets.logging_utils import configure_logging
 from eli.datasets.target import stream_target_data
 from eli.datasets.tokens import stream_tokens
 from eli.datasets.upload import create_and_upload_shards, upload_dataset_config
-from eli.datasets.logging_utils import configure_logging
 
 
 def main():
@@ -12,9 +12,9 @@ def main():
 
     # Configure logging to both console and S3
     s3_handler = configure_logging(ds_cfg.s3_bucket, f"datasets/{dataset_name}")
-    
+
     logging.info(f"Starting data collection for dataset: {dataset_name}")
-    
+
     # Collect tokens
     token_stream = stream_tokens()
 
@@ -37,7 +37,7 @@ def main():
         # Ensure any resources are properly closed
         if "target_stream" in locals() and hasattr(target_stream, "close"):
             target_stream.close()
-        
+
         # Flush and close the S3 log handler
         logging.info("Finalizing logs...")
         s3_handler.flush()

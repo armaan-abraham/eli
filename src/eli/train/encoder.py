@@ -259,11 +259,10 @@ class Encoder(torch.nn.Module):
 
         # Length of sequence which includes encoding tokens that are used for
         # prediction and target embeddings
-        self.seq_len_target = dataset_cfg.num_act_layers * dataset_cfg.target_acts_collect_len_toks
-        self.tot_seq_len = (
-            encoder_cfg.encoding_len_toks
-            + self.seq_len_target
+        self.seq_len_target = (
+            dataset_cfg.num_act_layers * dataset_cfg.target_acts_collect_len_toks
         )
+        self.tot_seq_len = encoder_cfg.encoding_len_toks + self.seq_len_target
 
         self.pos_emb = torch.nn.Parameter(
             torch.zeros(self.tot_seq_len, encoder_cfg.d_model)
@@ -274,9 +273,7 @@ class Encoder(torch.nn.Module):
             [TransformerBlock(encoder_cfg) for _ in range(encoder_cfg.n_layers)]
         )
 
-        self.pre_unembed_layernorm = torch.nn.LayerNorm(
-            encoder_cfg.d_model
-        )
+        self.pre_unembed_layernorm = torch.nn.LayerNorm(encoder_cfg.d_model)
 
         # Output heads convert transformer outputs to decoder embeddings
         self.unembed = torch.nn.Linear(
@@ -290,9 +287,11 @@ class Encoder(torch.nn.Module):
         self, x: Float[Tensor, "batch tok layer d_target_model"]
     ) -> Float[Tensor, "batch tok d_decoder_model"]:
         batch_size = x.shape[0]
-        x = einops.rearrange(x, "batch tok layer d_target_model -> batch (tok layer) d_target_model")
+        x = einops.rearrange(
+            x, "batch tok layer d_target_model -> batch (tok layer) d_target_model"
+        )
 
-        x = self.embed(x) # [batch tok d_model]
+        x = self.embed(x)  # [batch tok d_model]
         assert x.shape == (
             batch_size,
             self.seq_len_target,
@@ -332,14 +331,13 @@ class Encoder(torch.nn.Module):
 
         out = self.unembed(encodings)
 
-        assert (
-            out.shape
-            == (
-                x.shape[0],
-                self.encoder_cfg.encoding_len_toks,
-                self.train_cfg.decoder_model_embed_dim,
-            )
-        ), f"Expected shape {(x.shape[0], self.encoder_cfg.encoding_len_toks, self.train_cfg.decoder_model_embed_dim)}, got {out.shape}"
+        assert out.shape == (
+            x.shape[0],
+            self.encoder_cfg.encoding_len_toks,
+            self.train_cfg.decoder_model_embed_dim,
+        ), (
+            f"Expected shape {(x.shape[0], self.encoder_cfg.encoding_len_toks, self.train_cfg.decoder_model_embed_dim)}, got {out.shape}"
+        )
 
         return out
 
@@ -413,7 +411,9 @@ class EncoderDecoder(torch.nn.Module):
         )
 
         # Use different autocast dtype for decoder to match its training dtype
-        with torch.autocast(device_type=target_acts.device.type, dtype=self.train_cfg.dtype_decoder):
+        with torch.autocast(
+            device_type=target_acts.device.type, dtype=self.train_cfg.dtype_decoder
+        ):
             # Run the decoder
             decoder_logits = self.decoder(
                 inputs_embeds=decoder_context_embeddings, attention_mask=attention_mask
@@ -578,6 +578,7 @@ def get_loss(
     target_acts: Float[Tensor, "batch tok d_model_target"],
     tokenizer: AutoTokenizer,
     train_iter: int = -1,
+    return_embeddings: bool = False,
 ):
     """Calculate loss for the encoder-decoder model.
     Tuple
@@ -607,6 +608,9 @@ def get_loss(
         target_prediction_loss = get_target_prediction_loss(
             decoder_logits_target_tokens, target_generated_tokens, tokenizer
         )
+
+        if return_embeddings:
+            return target_prediction_loss, virtual_embeddings
 
         return target_prediction_loss
 
@@ -658,9 +662,9 @@ def get_loss_control(
             )
 
             # Assert attention mask and input token shapes match
-            assert (
-                attention_mask.shape == input_tokens.shape
-            ), f"Attention mask shape: {attention_mask.shape}, input tokens shape: {input_tokens.shape}"
+            assert attention_mask.shape == input_tokens.shape, (
+                f"Attention mask shape: {attention_mask.shape}, input tokens shape: {input_tokens.shape}"
+            )
 
             # Get decoder logits and compute loss
             decoder_logits = encoder_decoder.module.decoder(

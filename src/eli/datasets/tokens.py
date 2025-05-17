@@ -86,9 +86,9 @@ def tokenize_and_concatenate(
         text = examples[column_name]
         assert isinstance(text, list), f"Expected list, got {type(text)}"
         assert isinstance(text[0], list), f"Expected list of lists, got {type(text[0])}"
-        assert isinstance(
-            text[0][0], str
-        ), f"Expected list of lists of strings, got {type(text[0][0])}"
+        assert isinstance(text[0][0], str), (
+            f"Expected list of lists of strings, got {type(text[0][0])}"
+        )
 
         # Concatenate text with EOS tokens between entries
         full_text = tokenizer.eos_token.join(
@@ -115,9 +115,9 @@ def tokenize_and_concatenate(
         tokens = tokens[tokens != tokenizer.pad_token_id]
         num_tokens = len(tokens)
 
-        assert (
-            num_tokens > seq_len
-        ), f"Num tokens: {num_tokens} is less than seq_len: {seq_len}"
+        assert num_tokens > seq_len, (
+            f"Num tokens: {num_tokens} is less than seq_len: {seq_len}"
+        )
         logging.info(f"Num tokens: {num_tokens}")
 
         # Create batches of tokens of length seq_len

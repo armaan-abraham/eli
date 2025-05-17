@@ -6,7 +6,7 @@ import json
 import os
 import signal
 import sys
-from typing import Tuple
+from typing import Dict, Tuple
 
 import boto3
 import einops
@@ -95,7 +95,7 @@ def save_encoder(encoder_decoder: EncoderDecoder, train_cfg: TrainConfig):
             print(f"Encoder saved to S3: s3://{train_cfg.s3_bucket}/{s3_key}")
         except Exception as e:
             print(f"Failed to save encoder to S3: {e}")
-            raise e # We want program to fail if S3 saving failed
+            raise e  # We want program to fail if S3 saving failed
 
 
 def get_gradient_stats(parameters):
@@ -195,6 +195,53 @@ def preprocess_acts(
     return acts
 
 
+def get_virtual_embeddings_stats(
+    virtual_embeddings: Float[Tensor, "batch tok_seq d_embed"],
+    vocab_embeddings: Float[Tensor, "tok_vocab d_embed"],
+) -> Dict[str, float]:
+    result = {}
+
+    # Get dot products between each embedding
+    virtual_embeddings_normal = virtual_embeddings / virtual_embeddings.norm(
+        dim=-1, keepdim=True
+    )
+    vocab_embeddings_normal = vocab_embeddings / vocab_embeddings.norm(
+        dim=-1, keepdim=True
+    )
+    dot_products = einops.einsum(
+        virtual_embeddings_normal,
+        vocab_embeddings_normal,
+        "batch tok_seq d_embed, tok_vocab d_embed -> batch tok_seq tok_vocab",
+    )
+
+    # Get l2 distance between each embedding
+    distances = virtual_embeddings[:, :, None, :] - vocab_embeddings[None, None, :, :]
+    assert distances.shape == (
+        virtual_embeddings.shape[0],
+        virtual_embeddings.shape[1],
+        vocab_embeddings.shape[0],
+        vocab_embeddings.shape[1],
+    )
+
+    def process_max_similarities(
+        similarities: Float[Tensor, "batch tok_seq tok_vocab"],
+    ) -> Dict[str, float]:
+        result = {}
+        max_similarities = similarities.max(dim=-1)
+        result["max_mean"] = max_similarities.mean().item()
+        result["max_std"] = max_similarities.std().item()
+        result["max_min"] = max_similarities.min().item()
+        result["max_max"] = max_similarities.max().item()
+        return result
+
+    result.update(
+        {f"{k}_cosine": v for k, v in process_max_similarities(dot_products).items()}
+    )
+    result.update(
+        {f"{k}_l2": v for k, v in process_max_similarities(distances).items()}
+    )
+
+    return result
 
 
 def train():
@@ -203,9 +250,9 @@ def train():
 
     # Get dataset config from S3
     dataset_cfg = pull_dataset_config(train_cfg)
-    assert (
-        dataset_cfg.num_samples >= train_cfg.num_samples
-    ), "Must have at least as many samples as requested"
+    assert dataset_cfg.num_samples >= train_cfg.num_samples, (
+        "Must have at least as many samples as requested"
+    )
 
     # Initialize decoder tokenizer
     decoder_tokenizer = AutoTokenizer.from_pretrained(train_cfg.decoder_model_name)
@@ -315,7 +362,7 @@ def train():
             # Update model
             optimizer.zero_grad()
 
-            loss = get_loss(
+            loss, virtual_embeddings = get_loss(
                 train_cfg,
                 device,
                 encoder_decoder_ddp,
@@ -324,6 +371,7 @@ def train():
                 target_acts,
                 decoder_tokenizer,
                 train_iter,
+                return_embeddings=True,
             )
 
             # Backward pass with loss scaling
@@ -361,14 +409,25 @@ def train():
                     log_dict["loss_control"] = loss_control.item()
                     del loss_control
 
+                if (
+                    train_iter % train_cfg.log_virtual_embeddings_stats_every_n_iter
+                    == 0
+                ):
+                    log_dict.update(
+                        get_virtual_embeddings_stats(
+                            virtual_embeddings,
+                            encoder_decoder.module.decoder.get_input_embeddings().weight,
+                        )
+                    )
+
                 wandb.log(log_dict)
 
             if device.type == "cuda":
                 print(
-                    f"Rank {rank} peak memory: {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB, peak memory allocated: {torch.cuda.max_memory_allocated() / 1024 ** 3:.2f} GB"
+                    f"Rank {rank} peak memory: {torch.cuda.max_memory_allocated() / 1024**3:.2f} GB, peak memory allocated: {torch.cuda.max_memory_allocated() / 1024**3:.2f} GB"
                 )
 
-            del target_acts, target_generated_tokens, attention_mask, loss
+            del target_acts, target_generated_tokens, attention_mask, loss, virtual_embeddings
 
             gc.collect()
             if torch.cuda.is_available():

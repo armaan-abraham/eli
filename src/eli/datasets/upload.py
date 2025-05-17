@@ -37,9 +37,9 @@ def create_and_upload_shards(
         batch_size = first_tensor.shape[0]
 
         for table_name, tensor in tensor_dict.items():
-            assert (
-                tensor.shape[0] == batch_size
-            ), f"Batch size mismatch for table {table_name}"
+            assert tensor.shape[0] == batch_size, (
+                f"Batch size mismatch for table {table_name}"
+            )
 
         # Write the entire batch at once
         sample_dict = {
@@ -59,12 +59,12 @@ def create_and_upload_shards(
         batch_idx += 1
 
         # Update progress bar with bytes information
-        progress_bar.set_postfix(processed_bytes=f"{total_bytes/1024**2:.2f} MB")
+        progress_bar.set_postfix(processed_bytes=f"{total_bytes / 1024**2:.2f} MB")
         progress_bar.update(batch_size)
-        
+
         # Log progress to file (tqdm updates console)
         log_progress(total_samples, ds_cfg.num_samples)
-        logging.info(f"Total data size: {total_bytes/1024**2:.2f} MB")
+        logging.info(f"Total data size: {total_bytes / 1024**2:.2f} MB")
 
         # Check if we've reached the desired number of samples
         if total_samples >= ds_cfg.num_samples:

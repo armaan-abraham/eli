@@ -26,13 +26,14 @@ class TrainConfig:
     decoder_model_embed_dim: int = 512
 
     # Autocast
-    _dtype_decoder: torch.dtype = torch.float16 
+    _dtype_decoder: torch.dtype = torch.float16
     _dtype_encoder: torch.dtype = torch.bfloat16
 
     save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
     save_encoder_to_s3: bool = True
 
     log_loss_control_every_n_iter: int = 20
+    log_virtual_embeddings_stats_every_n_iter: int = 10
 
     grad_clip_norm: float = 0.5
 
@@ -49,6 +50,7 @@ class TrainConfig:
             return self._dtype_encoder
         else:
             return torch.float32
+
 
 train_cfg = TrainConfig()
 

@@ -59,7 +59,11 @@ def download_dataset(
     dataset = (
         # Shard shuffle false because of multi node
         wds.WebDataset(
-            url, resampled=True, nodesplitter=wds.split_by_node, shardshuffle=False, handler=wds.warn_and_continue
+            url,
+            resampled=True,
+            nodesplitter=wds.split_by_node,
+            shardshuffle=False,
+            handler=wds.warn_and_continue,
         )
         .shuffle(train_cfg.dataset_loader_shuffle_buffer_size_wds_entries)
         .decode()
