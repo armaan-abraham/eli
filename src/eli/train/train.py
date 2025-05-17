@@ -91,7 +91,7 @@ def save_encoder(
             print(f"Failed to save encoder locally: {e}")
 
     # Save to S3 if enabled
-    if train_cfg.save_encoder_to_s3:
+    if train_cfg.save_encoder_s3_prefix:
         try:
             # Create buffer to hold the model
             buffer = io.BytesIO()
@@ -103,7 +103,7 @@ def save_encoder(
 
             # Create S3 key from decoder model name, dataset name, and iteration
             decoder_name = train_cfg.decoder_model_name.split("/")[-1]
-            s3_key = f"models/{train_cfg.dataset_name}-{decoder_name}-encoder{s3_filename_suffix}.pt"
+            s3_key = f"models/{train_cfg.save_encoder_s3_prefix}-{train_cfg.dataset_name}-{decoder_name}-encoder{s3_filename_suffix}.pt"
 
             # Upload to S3
             s3_client.upload_fileobj(buffer, train_cfg.s3_bucket, s3_key)
@@ -431,7 +431,7 @@ def train():
                     log_dict.update(
                         get_virtual_embeddings_stats(
                             virtual_embeddings,
-                            encoder_decoder.module.decoder.get_input_embeddings().weight,
+                            encoder_decoder.decoder.get_input_embeddings().weight,
                         )
                     )
 
