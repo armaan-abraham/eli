@@ -10,7 +10,8 @@ from eli.datasets.config import DatasetConfig
 from eli.train.config import EncoderConfig, TrainConfig, encoder_cfg, train_cfg
 from eli.train.utils import log_decoded_tokens
 
-PROMPT_DECODER = """## role:system
+
+PROMPT_DECODER_8 = """## role:system
 You predict what a target LLM will write next, given a short note of its current thought process.
 Return only the predicted text — no commentary, no tags.
 
@@ -31,6 +32,36 @@ OUTPUT:
 ## role:example
 THOUGHT:
 Crafting headline AMD RDNA4 GPU launch coverage today
+OUTPUT:
+AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
+
+## role:test
+THOUGHT:
+<thought>
+OUTPUT:
+"""
+
+PROMPT_DECODER_4 = """## role:system
+You predict what a target LLM will write next, given a short note of its current thought process.
+Return only the predicted text — no commentary, no tags.
+
+## role:example
+THOUGHT:
+Conclude quantum entanglement definition
+OUTPUT:
+where two or more particles share a linked quantum state such that measuring one instantly sets the state of the other, no matter how far apart they are in space.
+
+## role:example
+THOUGHT:
+Writing body fib function
+OUTPUT:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+## role:example
+THOUGHT:
+Writing headline AMD RDNA4
 OUTPUT:
 AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher performance per watt, doubled ray-tracing throughput, and built-in AI engines targeting ultra-high-fps 4 K gaming across desktop and mobile.
 
@@ -61,6 +92,13 @@ AMD reveals RDNA 4 GPUs fabricated on 3 nm nodes, claiming thirty percent higher
 ## role:test
 OUTPUT:
 """
+
+if encoder_cfg.encoding_len_toks == 8:
+    PROMPT_DECODER = PROMPT_DECODER_8
+elif encoder_cfg.encoding_len_toks == 4:
+    PROMPT_DECODER = PROMPT_DECODER_4
+else:
+    raise ValueError(f"Invalid encoding length: {encoder_cfg.encoding_len_toks}")
 
 
 def prepend_bos_token(toks: Int[Tensor, "batch tok"], tokenizer: AutoTokenizer):
