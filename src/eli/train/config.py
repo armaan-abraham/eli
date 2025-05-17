@@ -31,6 +31,7 @@ class TrainConfig:
 
     save_encoder_path: Optional[Path] = SAVE_DIR / "encoder.pt"
     save_encoder_to_s3: bool = True
+    save_encoder_every_n_iter: int = 1000
 
     log_loss_control_every_n_iter: int = 20
     log_virtual_embeddings_stats_every_n_iter: int = 10

@@ -6,7 +6,7 @@ import json
 import os
 import signal
 import sys
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import boto3
 import einops
@@ -51,12 +51,18 @@ def preprocess_target_generated_tokens(
     return target_generated_tokens, attention_mask
 
 
-def save_encoder(encoder_decoder: EncoderDecoder, train_cfg: TrainConfig):
+def save_encoder(
+    encoder_decoder: EncoderDecoder,
+    train_cfg: TrainConfig,
+    train_iter: Optional[int] = None,
+):
     """Save the encoder part of the encoder-decoder model.
 
     Args:
         encoder_decoder: The encoder-decoder model
         train_cfg: Training configuration with save paths
+        train_iter: Optional training iteration number for periodic saving.
+                    If None, saves as the final model.
     """
     # Get the encoder, accounting for DataParallel
     encoder = encoder_decoder.encoder
@@ -64,14 +70,23 @@ def save_encoder(encoder_decoder: EncoderDecoder, train_cfg: TrainConfig):
     # Move to CPU before saving
     encoder = encoder.cpu()
 
+    # Determine filename based on whether it's a periodic save or final save
+    if train_iter is not None:
+        filename = f"encoder_iter_{train_iter}.pt"
+        s3_filename_suffix = f"_iter_{train_iter}"
+    else:
+        filename = "encoder_final.pt"  # Default to a final name if no iter provided
+        s3_filename_suffix = "_final"
+
     # Save the model locally if path is provided
     if train_cfg.save_encoder_path:
-        # Ensure the save directory exists
-        save_dir = train_cfg.save_encoder_path.parent
-        save_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure the save directory exists (parent of the base path)
+        base_save_dir = train_cfg.save_encoder_path.parent
+        base_save_dir.mkdir(parents=True, exist_ok=True)
+        local_save_path = base_save_dir / filename
         try:
-            torch.save(encoder.state_dict(), train_cfg.save_encoder_path)
-            print(f"Encoder saved to {train_cfg.save_encoder_path}")
+            torch.save(encoder.state_dict(), local_save_path)
+            print(f"Encoder saved to {local_save_path}")
         except Exception as e:
             print(f"Failed to save encoder locally: {e}")
 
@@ -86,9 +101,9 @@ def save_encoder(encoder_decoder: EncoderDecoder, train_cfg: TrainConfig):
             # Create S3 client
             s3_client = boto3.client("s3")
 
-            # Create S3 key from decoder model name and dataset name
+            # Create S3 key from decoder model name, dataset name, and iteration
             decoder_name = train_cfg.decoder_model_name.split("/")[-1]
-            s3_key = f"models/{train_cfg.dataset_name}-{decoder_name}-encoder.pt"
+            s3_key = f"models/{train_cfg.dataset_name}-{decoder_name}-encoder{s3_filename_suffix}.pt"
 
             # Upload to S3
             s3_client.upload_fileobj(buffer, train_cfg.s3_bucket, s3_key)
@@ -422,12 +437,29 @@ def train():
 
                 wandb.log(log_dict)
 
+            # ----- Periodic Saving -----
+            if (
+                rank == 0
+                and train_cfg.save_encoder_every_n_iter > 0
+                and (train_iter + 1) % train_cfg.save_encoder_every_n_iter == 0
+            ):
+                print(f"Periodically saving encoder at iteration {train_iter + 1}")
+                save_encoder(
+                    encoder_decoder_ddp.module, train_cfg, train_iter=train_iter + 1
+                )
+
             if device.type == "cuda":
                 print(
                     f"Rank {rank} peak memory: {torch.cuda.max_memory_allocated() / 1024**3:.2f} GB, peak memory allocated: {torch.cuda.max_memory_allocated() / 1024**3:.2f} GB"
                 )
 
-            del target_acts, target_generated_tokens, attention_mask, loss, virtual_embeddings
+            del (
+                target_acts,
+                target_generated_tokens,
+                attention_mask,
+                loss,
+                virtual_embeddings,
+            )
 
             gc.collect()
             if torch.cuda.is_available():
