@@ -216,6 +216,8 @@ def get_virtual_embeddings_stats(
 ) -> Dict[str, float]:
     result = {}
 
+    vocab_embeddings = vocab_embeddings.to(virtual_embeddings.dtype)
+
     # Get dot products between each embedding
     virtual_embeddings_normal = virtual_embeddings / virtual_embeddings.norm(
         dim=-1, keepdim=True
@@ -230,19 +232,18 @@ def get_virtual_embeddings_stats(
     )
 
     # Get l2 distance between each embedding
-    distances = virtual_embeddings[:, :, None, :] - vocab_embeddings[None, None, :, :]
+    distances = torch.cdist(virtual_embeddings, vocab_embeddings.unsqueeze(0))
     assert distances.shape == (
         virtual_embeddings.shape[0],
         virtual_embeddings.shape[1],
         vocab_embeddings.shape[0],
-        vocab_embeddings.shape[1],
     )
 
     def process_max_similarities(
         similarities: Float[Tensor, "batch tok_seq tok_vocab"],
     ) -> Dict[str, float]:
         result = {}
-        max_similarities = similarities.max(dim=-1)
+        max_similarities = similarities.max(dim=-1).values
         result["max_mean"] = max_similarities.mean().item()
         result["max_std"] = max_similarities.std().item()
         result["max_min"] = max_similarities.min().item()
@@ -265,9 +266,9 @@ def train():
 
     # Get dataset config from S3
     dataset_cfg = pull_dataset_config(train_cfg)
-    assert dataset_cfg.num_samples >= train_cfg.num_samples, (
-        "Must have at least as many samples as requested"
-    )
+    assert (
+        dataset_cfg.num_samples >= train_cfg.num_samples
+    ), "Must have at least as many samples as requested"
 
     # Initialize decoder tokenizer
     decoder_tokenizer = AutoTokenizer.from_pretrained(train_cfg.decoder_model_name)

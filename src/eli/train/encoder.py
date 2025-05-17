@@ -331,13 +331,14 @@ class Encoder(torch.nn.Module):
 
         out = self.unembed(encodings)
 
-        assert out.shape == (
-            x.shape[0],
-            self.encoder_cfg.encoding_len_toks,
-            self.train_cfg.decoder_model_embed_dim,
-        ), (
-            f"Expected shape {(x.shape[0], self.encoder_cfg.encoding_len_toks, self.train_cfg.decoder_model_embed_dim)}, got {out.shape}"
-        )
+        assert (
+            out.shape
+            == (
+                x.shape[0],
+                self.encoder_cfg.encoding_len_toks,
+                self.train_cfg.decoder_model_embed_dim,
+            )
+        ), f"Expected shape {(x.shape[0], self.encoder_cfg.encoding_len_toks, self.train_cfg.decoder_model_embed_dim)}, got {out.shape}"
 
         return out
 
@@ -662,9 +663,9 @@ def get_loss_control(
             )
 
             # Assert attention mask and input token shapes match
-            assert attention_mask.shape == input_tokens.shape, (
-                f"Attention mask shape: {attention_mask.shape}, input tokens shape: {input_tokens.shape}"
-            )
+            assert (
+                attention_mask.shape == input_tokens.shape
+            ), f"Attention mask shape: {attention_mask.shape}, input tokens shape: {input_tokens.shape}"
 
             # Get decoder logits and compute loss
             decoder_logits = encoder_decoder.module.decoder(

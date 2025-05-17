@@ -327,9 +327,9 @@ class TargetDataStream:
             Dictionary with processed tensors
         """
         atom_size = self.ds_cfg.dataset_entry_size_samples
-        assert tokens_batch.shape[0] == atom_size, (
-            f"Token batch size {tokens_batch.shape[0]} does not match expected size {atom_size}"
-        )
+        assert (
+            tokens_batch.shape[0] == atom_size
+        ), f"Token batch size {tokens_batch.shape[0]} does not match expected size {atom_size}"
 
         # Copy tokens to shared memory
         self.input_tokens[:] = tokens_batch
